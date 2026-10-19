@@ -278,39 +278,62 @@ impl TreeSpecies {
     }
 
     /// Checks ranges and invariants that the simulator relies on.
+    ///
+    /// Every `f32` must be finite. Angles are in radians; directions measured
+    /// from an axis (ψ, δ, θ, the set-points) lie in [0, π].
     pub fn validate(&self) -> Result<(), SpeciesError> {
-        use SpeciesError::OutOfRange;
+        use std::f32::consts::PI;
         let check = |field: &'static str, value: f32, ok: bool| {
             if ok && value.is_finite() {
                 Ok(())
             } else {
-                Err(OutOfRange { field, value })
+                Err(SpeciesError::OutOfRange { field, value })
             }
         };
+        let positive = |field, value: f32| check(field, value, value > 0.0);
+        let non_negative = |field, value: f32| check(field, value, value >= 0.0);
+        let angle = |field, value: f32| check(field, value, (0.0..=PI).contains(&value));
+
         let a = &self.architecture;
-        check(
-            "architecture.internode_length",
-            a.internode_length,
-            a.internode_length > 0.0,
-        )?;
+        check("architecture.divergence_angle", a.divergence_angle, true)?;
+        angle("architecture.branching_angle", a.branching_angle)?;
+        angle("architecture.deflection_angle", a.deflection_angle)?;
+        positive("architecture.internode_length", a.internode_length)?;
+
         let v = &self.vigor;
+        if let VigorModel::Priority {
+            w_max,
+            w_min,
+            top_fraction,
+        } = v.model
+        {
+            non_negative("vigor.model.w_min", w_min)?;
+            check("vigor.model.w_max", w_max, w_max >= w_min)?;
+            check(
+                "vigor.model.top_fraction",
+                top_fraction,
+                top_fraction > 0.0 && top_fraction <= 1.0,
+            )?;
+        }
+        let lambda = v.apical_control;
         check(
             "vigor.apical_control",
-            v.apical_control,
-            (0.0..=1.0).contains(&v.apical_control),
+            lambda,
+            (0.0..=1.0).contains(&lambda),
         )?;
-        check(
-            "vigor.light_exponent",
-            v.light_exponent,
-            v.light_exponent >= 0.0,
-        )?;
+        non_negative("vigor.light_exponent", v.light_exponent)?;
+        positive("vigor.root_vigor_scale", v.root_vigor_scale)?;
+        non_negative("vigor.activation_threshold", v.activation_threshold)?;
         if v.max_shoot_length == 0 {
-            return Err(OutOfRange {
+            return Err(SpeciesError::OutOfRange {
                 field: "vigor.max_shoot_length",
                 value: 0.0,
             });
         }
+
         let t = &self.tropism;
+        angle("tropism.lateral_set_point", t.lateral_set_point)?;
+        angle("tropism.main_set_point", t.main_set_point)?;
         let sum = t.straightness + t.gravitropism + t.environment;
         if [t.straightness, t.gravitropism, t.environment]
             .iter()
@@ -319,29 +342,40 @@ impl TreeSpecies {
         {
             return Err(SpeciesError::TropismWeights { sum });
         }
+
+        let g = &self.gravimorphism;
+        positive("gravimorphism.vertical_axis", g.vertical_axis)?;
+        positive("gravimorphism.horizontal_axis", g.horizontal_axis)?;
+        check("gravimorphism.vertical_offset", g.vertical_offset, true)?;
+
         let s = &self.space;
+        positive("space.occupancy_radius", s.occupancy_radius)?;
+        // A half-angle of π would make the cone the whole sphere.
         check(
-            "space.occupancy_radius",
-            s.occupancy_radius,
-            s.occupancy_radius > 0.0,
+            "space.perception_angle",
+            s.perception_angle,
+            s.perception_angle > 0.0 && s.perception_angle < PI,
         )?;
         check(
             "space.perception_distance",
             s.perception_distance,
             s.perception_distance > s.occupancy_radius,
         )?;
-        check(
-            "shadow.falloff",
-            self.shadow.falloff,
-            self.shadow.falloff > 1.0,
+        non_negative("space.auto_markers_per_vigor", s.auto_markers_per_vigor)?;
+
+        let sh = &self.shadow;
+        positive("shadow.full_light", sh.full_light)?;
+        non_negative("shadow.strength", sh.strength)?;
+        check("shadow.falloff", sh.falloff, sh.falloff > 1.0)?;
+
+        non_negative(
+            "shedding.light_per_internode_threshold",
+            self.shedding.light_per_internode_threshold,
         )?;
+
         let n = self.thickness.pipe_exponent;
         check("thickness.pipe_exponent", n, (2.0..=3.0).contains(&n))?;
-        check(
-            "thickness.tip_radius",
-            self.thickness.tip_radius,
-            self.thickness.tip_radius > 0.0,
-        )?;
+        positive("thickness.tip_radius", self.thickness.tip_radius)?;
         Ok(())
     }
 }
@@ -410,7 +444,13 @@ mod tests {
 
     #[test]
     fn validation_enforces_parameter_ranges() {
-        let bad: [fn(&mut TreeSpecies); 9] = [
+        use std::f32::consts::PI;
+        let bad: &[fn(&mut TreeSpecies)] = &[
+            |s| s.architecture.divergence_angle = f32::INFINITY,
+            |s| s.architecture.branching_angle = -0.1,
+            |s| s.architecture.branching_angle = PI + 0.1,
+            |s| s.architecture.deflection_angle = f32::NAN,
+            |s| s.architecture.internode_length = 0.0,
             |s| s.vigor.apical_control = 1.01,
             |s| s.vigor.apical_control = -0.01,
             |s| s.vigor.light_exponent = -1.0,
@@ -420,6 +460,40 @@ mod tests {
             |s| s.shadow.falloff = 1.0,
             |s| s.space.perception_distance = s.space.occupancy_radius,
             |s| s.architecture.internode_length = f32::NAN,
+            |s| s.vigor.root_vigor_scale = 0.0,
+            |s| s.vigor.activation_threshold = -0.1,
+            |s| {
+                s.vigor.model = VigorModel::Priority {
+                    w_max: 0.5,
+                    w_min: 1.0,
+                    top_fraction: 0.5,
+                }
+            },
+            |s| {
+                s.vigor.model = VigorModel::Priority {
+                    w_max: 1.0,
+                    w_min: -0.1,
+                    top_fraction: 0.5,
+                }
+            },
+            |s| {
+                s.vigor.model = VigorModel::Priority {
+                    w_max: 1.0,
+                    w_min: 0.0,
+                    top_fraction: 0.0,
+                }
+            },
+            |s| s.tropism.lateral_set_point = PI + 0.1,
+            |s| s.tropism.main_set_point = -0.1,
+            |s| s.gravimorphism.vertical_axis = 0.0,
+            |s| s.gravimorphism.horizontal_axis = -1.0,
+            |s| s.gravimorphism.vertical_offset = f32::NAN,
+            |s| s.space.perception_angle = 0.0,
+            |s| s.space.perception_angle = PI,
+            |s| s.space.auto_markers_per_vigor = -1.0,
+            |s| s.shadow.full_light = 0.0,
+            |s| s.shadow.strength = -0.1,
+            |s| s.shedding.light_per_internode_threshold = -0.1,
         ];
         for (i, edit) in bad.iter().enumerate() {
             let mut s = TreeSpecies::default();
@@ -430,6 +504,14 @@ mod tests {
         let mut s = TreeSpecies::default();
         s.vigor.apical_control = 0.0;
         s.thickness.pipe_exponent = 3.0;
+        s.architecture.branching_angle = PI;
+        s.tropism.lateral_set_point = PI;
+        s.space.auto_markers_per_vigor = 0.0;
+        s.vigor.model = VigorModel::Priority {
+            w_max: 1.0,
+            w_min: 1.0,
+            top_fraction: 1.0,
+        };
         assert_eq!(s.validate(), Ok(()));
     }
 
