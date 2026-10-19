@@ -1,6 +1,6 @@
 # Tree Generator Design Document
 
-Oct 19, 2026 · @DM
+Oct 19, 2026 · David A McDougall
 
 ## Purpose and goals
 

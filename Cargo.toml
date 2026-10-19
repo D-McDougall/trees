@@ -7,6 +7,19 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.97.1"
 publish = false
+license = "MIT OR Apache-2.0"
+authors = ["David A McDougall"]
 
 [workspace.dependencies]
 glam = "0.33"
+
+# Size-optimized profile for the web build of trees-viewer. It is separate from
+# `release` so native release builds keep opt-level 3.
+#   trunk build --release --cargo-profile wasm-release
+[profile.wasm-release]
+inherits = "release"
+opt-level = "z"
+lto = "fat"
+codegen-units = 1
+strip = true
+panic = "abort"

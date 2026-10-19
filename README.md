@@ -1,0 +1,150 @@
+# trees
+
+A procedural generator for 3D tree models, written in Rust.
+
+Most procedural trees repeat a fixed recursive rule, such as an L-system or a
+fractal, and need many hand-tuned parameters before the branching looks
+natural. This project grows trees the way Pałubicki et al. (2009) describe
+instead: buds compete for light and free space, internal signals decide how
+much vigor each one gets, and the form of the crown emerges from that
+competition. A handful of species parameters (apical control, light
+sensitivity, tropism, phyllotaxis) is enough to get plausible branch density,
+and the same model lets a user steer growth with brushes rather than numbers.
+
+The generator runs natively and in the browser.
+
+## Status
+
+The project is at an early stage. The data model is in place, but the growth
+simulator is not written yet.
+
+| Crate | What works today | Planned |
+| --- | --- | --- |
+| [`trees-core`](crates/trees-core) | The tree graph (an arena of internodes whose empty child slots are buds), species parameters with validation and two presets, growing and pruning internodes, tip-to-base folds, and the `Habitat` trait | The growth simulator: marker-based space colonization, a light grid, vigor allocation, shedding and pipe-model thickness |
+| [`trees-mesh`](crates/trees-mesh) | Wireframe output: one line per internode | Swept generalized cylinders, leaf instances, levels of detail |
+| [`trees-viewer`](crates/trees-viewer) | A Bevy app that grows a fixed test tree and shows its wireframe turning on a ground disc | An egui panel for species presets, brush, prune, bend and undo tools |
+
+## Quick start
+
+You need Rust 1.97.1 or newer.
+
+Run the viewer natively:
+
+```sh
+cargo run -p trees-viewer
+```
+
+Run it in the browser with [Trunk](https://trunkrs.dev):
+
+```sh
+rustup target add wasm32-unknown-unknown
+cargo install --locked trunk
+cd crates/trees-viewer
+trunk serve --release
+```
+
+Then open <http://127.0.0.1:8080>. Use `--release`: a debug build of Bevy for
+the web is several hundred megabytes of wasm.
+
+Run the tests:
+
+```sh
+cargo test --workspace
+```
+
+## Workspace layout
+
+```
+crates/
+  trees-core/    tree graph, species parameters, Habitat trait (depends only on glam)
+  trees-mesh/    engine-neutral geometry builder (vertex and index buffers)
+  trees-viewer/  Bevy + egui viewer, native and wasm
+docs/
+  design.md      design document
+```
+
+Data flows one way. The growth simulator and user edits change the tree graph
+in `trees-core`. `trees-mesh` reads a snapshot of the graph and builds plain
+buffers. The viewer uploads those buffers to Bevy. Neither library crate
+depends on a game engine, so the geometry can be used anywhere.
+
+## Using the libraries
+
+The crates are not published to crates.io. Depend on them by path or Git URL.
+
+```rust
+use std::sync::Arc;
+
+use glam::Vec3;
+use trees_core::{SlotIndex, Tree, TreeSpecies};
+use trees_mesh::{MeshOptions, build_mesh};
+
+let species = Arc::new(TreeSpecies::conifer());
+let mut tree = Tree::new(species, 42, Vec3::ZERO)?;
+
+// The world, as growth sees it: anything below the ground plane is solid.
+// A closure works; a game would implement `Habitat` on its own scene.
+let ground = |p: Vec3| p.y < 0.0;
+
+let root = tree.root();
+tree.grow(&ground, root, SlotIndex::Main, Vec3::Y, 0.5);
+tree.grow(&ground, root, SlotIndex::Lateral(0), Vec3::new(1.0, 0.3, 0.0), 0.3);
+tree.advance_step();
+
+// Plain positions and indices, ready for any engine.
+let mesh = build_mesh(&tree, &MeshOptions::default());
+```
+
+`Tree::grow` returns `None` when the bud is missing or the new tip would land
+in occupied space; the bud then stays in place and can grow later.
+
+## Design
+
+The tree graph is the single source of truth: everything visible is derived
+from it, so a growth step, a pruned branch or an undo is handled by rebuilding
+meshes, never by patching them. Simulation and rendering run on separate
+threads, and the renderer reads an immutable snapshot. Every randomized choice
+is seeded and hashed by position, so the same species, seed and edit history
+always produce the same tree.
+
+The full design, including the data structures, the growth loop, the
+interaction tools and the geometry passes, is in
+[docs/design.md](docs/design.md).
+
+## References
+
+The growth model and interaction design build on the following work.
+
+1. Wojciech Pałubicki, Kipp Horel, Steven Longay, Adam Runions, Brendan Lane,
+   Radomír Měch and Przemyslaw Prusinkiewicz. 2009. Self-organizing tree
+   models for image synthesis. *ACM Transactions on Graphics* 28, 3
+   (Proceedings of SIGGRAPH 2009), Article 58, 10 pages.
+   <https://doi.org/10.1145/1531326.1531364>
+2. Steven Longay. 2014. *Interactive Procedural Modelling of Trees and
+   Landscapes.* PhD thesis, Department of Computer Science, University of
+   Calgary. <https://doi.org/10.11575/PRISM/26605>
+3. Jeremy Adam Hart. 2020. *Interactive Visualization and Modeling of Plant
+   Structures in Virtual Reality.* MSc thesis, Department of Computer Science,
+   University of Calgary. <http://hdl.handle.net/1880/116303>
+4. Miłosz Makowski, Torsten Hädrich, Jan Scheffczyk, Dominik L. Michels, Sören
+   Pirk and Wojtek Pałubicki. 2019. Synthetic Silviculture: Multi-scale
+   Modeling of Plant Ecosystems. *ACM Transactions on Graphics* 38, 4
+   (Proceedings of SIGGRAPH 2019), Article 131, 14 pages.
+   <https://doi.org/10.1145/3306346.3323039>
+5. Ruben M. Smelik, Tim Tutenel, Rafael Bidarra and Bedrich Benes. 2014. A
+   Survey on Procedural Modelling for Virtual Worlds. *Computer Graphics
+   Forum* 33, 6, 31–50. <https://doi.org/10.1111/cgf.12276>
+
+## License
+
+Licensed under either of
+
+- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE) or
+  <https://www.apache.org/licenses/LICENSE-2.0>)
+- MIT license ([LICENSE-MIT](LICENSE-MIT) or <https://opensource.org/licenses/MIT>)
+
+at your option.
+
+Unless you explicitly state otherwise, any contribution intentionally submitted
+for inclusion in the work by you, as defined in the Apache-2.0 license, shall
+be dual licensed as above, without any additional terms or conditions.
