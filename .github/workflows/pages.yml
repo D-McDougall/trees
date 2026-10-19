@@ -1,0 +1,65 @@
+# Builds the trees-viewer web app with Trunk and deploys it to GitHub Pages.
+# In the repository settings, set Pages > Source to "GitHub Actions".
+name: Deploy viewer to GitHub Pages
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+env:
+  # URL path the site is served under. A project Pages site lives at
+  # https://<owner>.github.io/<repo>/, so this defaults to the repository name.
+  # It must start and end with "/".
+  PUBLIC_URL: /${{ github.event.repository.name }}/
+  TRUNK_VERSION: v0.21.14
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install Trunk
+        run: |
+          curl -fsSL "https://github.com/trunk-rs/trunk/releases/download/${TRUNK_VERSION}/trunk-x86_64-unknown-linux-gnu.tar.gz" \
+            | tar -xz -C "$HOME/.cargo/bin" trunk
+          trunk --version
+
+      - name: Build
+        working-directory: crates/trees-viewer
+        run: |
+          trunk build --release --cargo-profile wasm-release --public-url "$PUBLIC_URL"
+          rm -rf dist/.stage
+          touch dist/.nojekyll
+
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: crates/trees-viewer/dist
+          # Keep .nojekyll, which the action otherwise drops with other dotfiles.
+          include-hidden-files: true
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5
