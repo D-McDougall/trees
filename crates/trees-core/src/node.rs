@@ -166,32 +166,32 @@ pub struct TreeNode {
 impl TreeNode {
     /// A new node whose buds are placed by its species' phyllotaxis.
     ///
-    /// `lateral_hint` is the parent's lateral vector (or any vector for the
-    /// root); it is rotated by the divergence angle and re-orthogonalized
-    /// against `heading`.
+    /// The lateral vector moves along the tree as in Hart 2020 §9.3: the
+    /// parent's lateral is rotated by the divergence angle about the parent's
+    /// heading, then carried by the rotation from the parent's heading to this
+    /// node's. For the root, pass its own heading and any perpendicular vector.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         species: Arc<TreeSpecies>,
         parent: Option<NodeId>,
         position: Vec3,
         heading: Vec3,
-        lateral_hint: Vec3,
+        parent_heading: Vec3,
+        parent_lateral: Vec3,
         length: f32,
         order: u16,
         birth_step: u32,
     ) -> Self {
         let arch = &species.architecture;
         let heading = heading.normalize();
-        let lateral = Quat::from_axis_angle(heading, arch.divergence_angle) * lateral_hint;
-        // A hint (nearly) parallel to the heading leaves only rounding error
-        // after projection, which would normalize to a non-perpendicular
-        // vector, so fall back to an arbitrary perpendicular instead.
-        let projected = lateral - heading * lateral.dot(heading);
-        let lateral = if projected.length_squared() > 1e-6 * lateral.length_squared() {
-            projected.normalize()
-        } else {
-            heading.any_orthonormal_vector()
-        };
+        let parent_heading = parent_heading.normalize();
+        let q_div = Quat::from_axis_angle(parent_heading, arch.divergence_angle);
+        let q_head = Quat::from_rotation_arc(parent_heading, heading);
+        let lateral = q_head * q_div * parent_lateral;
+        // Re-orthonormalize against the drift of repeated rotations.
+        let lateral = (lateral - heading * lateral.dot(heading))
+            .try_normalize()
+            .unwrap_or_else(|| heading.any_orthonormal_vector());
 
         // b_main = cos δ·h − sin δ·l ; b_lat = cos ψ·h ± sin ψ·l
         let (sin_d, cos_d) = arch.deflection_angle.sin_cos();
@@ -280,13 +280,24 @@ mod tests {
 
     const EPS: f32 = 1e-5;
 
+    /// A root-like node: no change of heading, `hint` as the prior lateral.
     fn node(species: TreeSpecies, heading: Vec3, hint: Vec3) -> TreeNode {
+        child(species, heading, hint, heading)
+    }
+
+    fn child(
+        species: TreeSpecies,
+        parent_heading: Vec3,
+        parent_lateral: Vec3,
+        heading: Vec3,
+    ) -> TreeNode {
         TreeNode::new(
             Arc::new(species),
             None,
             Vec3::ZERO,
             heading,
-            hint,
+            parent_heading,
+            parent_lateral,
             1.0,
             0,
             0,
@@ -301,16 +312,40 @@ mod tests {
 
     #[test]
     fn frame_is_orthonormal() {
-        for heading in [Vec3::Y, Vec3::new(1.0, 2.0, -0.5), -Vec3::X] {
-            // A hint parallel to the heading must still yield a valid frame.
-            for hint in [Vec3::X, Vec3::Z, heading] {
-                let n = node(TreeSpecies::default(), heading, hint);
-                assert!((n.heading.length() - 1.0).abs() < EPS);
-                assert!((n.lateral.length() - 1.0).abs() < EPS);
-                assert!(n.heading.dot(n.lateral).abs() < EPS);
-                assert!((n.binormal().length() - 1.0).abs() < EPS);
-            }
+        let h = Vec3::new(1.0, 2.0, -0.5).normalize();
+        let l = h.any_orthonormal_vector();
+        // Includes a child along the parent's lateral (ψ = 90°) and one that
+        // turns fully back on its parent.
+        for heading in [h, l, -l, h + l, -h, Vec3::Y, Vec3::new(0.3, -1.0, 0.2)] {
+            let n = child(TreeSpecies::default(), h, l, heading);
+            assert!((n.heading.length() - 1.0).abs() < EPS);
+            assert!((n.lateral.length() - 1.0).abs() < EPS);
+            assert!(n.heading.dot(n.lateral).abs() < EPS);
+            assert!((n.binormal().length() - 1.0).abs() < EPS);
         }
+    }
+
+    #[test]
+    fn lateral_is_transported_as_in_hart() {
+        // Hart 2020 §9.3: rotate l by the divergence angle about the previous
+        // heading, then by the rotation from the previous to the new heading.
+        let mut s = TreeSpecies::default();
+        s.architecture.divergence_angle = 0.0;
+        // A lateral grown at ψ = 90° along l = X: turning Y onto X takes X to −Y.
+        let n = child(s.clone(), Vec3::Y, Vec3::X, Vec3::X);
+        assert!((n.lateral + Vec3::Y).length() < EPS);
+        // A turn about the lateral itself leaves the lateral unchanged.
+        let n = child(s.clone(), Vec3::Y, Vec3::X, Vec3::new(0.0, 1.0, 1.0));
+        assert!((n.lateral - Vec3::X).length() < EPS);
+
+        let s = TreeSpecies::default();
+        let phi = s.architecture.divergence_angle;
+        let heading = Vec3::new(0.4, 1.0, -0.3).normalize();
+        let n = child(s, Vec3::Y, Vec3::X, heading);
+        let expected = Quat::from_rotation_arc(Vec3::Y, heading)
+            * Quat::from_axis_angle(Vec3::Y, phi)
+            * Vec3::X;
+        assert!((n.lateral - expected).length() < EPS);
     }
 
     #[test]
