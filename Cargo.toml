@@ -1,9 +1,12 @@
-[package]
-name = "trees"
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
 version = "0.1.0"
 edition = "2024"
-description = "Self-organizing procedural tree generator (core data structures)"
+rust-version = "1.97.1"
 publish = false
 
-[dependencies]
-glam = "0.29"
+[workspace.dependencies]
+glam = "0.33"

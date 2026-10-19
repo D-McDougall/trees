@@ -1,0 +1,13 @@
+[package]
+name = "trees-viewer"
+description = "Interactive viewer and editor for trees-core, built on Bevy and egui"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+trees-core = { path = "../trees-core" }
+trees-mesh = { path = "../trees-mesh" }
+bevy = "0.20"
+bevy_egui = "0.43"

@@ -1,0 +1,11 @@
+[package]
+name = "trees-mesh"
+description = "Engine-neutral geometry builder for trees-core tree graphs"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+trees-core = { path = "../trees-core" }
+glam.workspace = true
