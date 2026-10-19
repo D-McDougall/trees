@@ -9,13 +9,18 @@
 //! - [`TreeNode`]: one internode, species-agnostic. Its child slots are either
 //!   another node or a [`Bud`], so buds need no separate storage.
 //! - [`Tree`]: an arena that owns the nodes and hands out [`NodeId`]s.
+//!
+//! The host world is seen only through the [`Habitat`] trait, which growth
+//! consults so branches do not grow into occupied space.
 
 #![warn(missing_docs)]
 
+pub mod habitat;
 pub mod node;
 pub mod species;
 pub mod tree;
 
+pub use habitat::{Habitat, OpenAir};
 pub use node::{Bud, BudFate, NodeId, Slot, SlotIndex, TreeNode};
 pub use species::{
     Architecture, BranchingPattern, Gravimorphism, Shadow, Shedding, SpaceColonization,

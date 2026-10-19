@@ -9,7 +9,7 @@ use std::sync::Arc;
 use bevy::asset::RenderAssetUsages;
 use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::prelude::*;
-use trees_core::{Tree, TreeSpecies};
+use trees_core::{Habitat, Tree, TreeSpecies};
 use trees_mesh::{MeshOptions, Topology, TreeMesh, build_mesh};
 
 fn main() {
@@ -34,19 +34,33 @@ fn main() {
 #[derive(Component)]
 struct Spin;
 
+/// The viewer's world as the growth logic sees it: everything below the
+/// ground plane is solid.
+struct Scene {
+    ground_height: f32,
+}
+
+impl Habitat for Scene {
+    fn occupied(&self, point: glam::Vec3) -> bool {
+        point.y < self.ground_height
+    }
+}
+
 fn setup(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
+    let scene = Scene { ground_height: 0.0 };
     // Ground disc
     commands.spawn((
         Mesh3d(meshes.add(Circle::new(6.0))),
         MeshMaterial3d(materials.add(Color::srgb(0.35, 0.55, 0.3))),
-        Transform::from_rotation(Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2)),
+        Transform::from_rotation(Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2))
+            .with_translation(Vec3::Y * scene.ground_height),
     ));
     // Test tree
-    let tree_mesh = build_mesh(&test_tree(), &MeshOptions::default());
+    let tree_mesh = build_mesh(&test_tree(&scene), &MeshOptions::default());
     commands.spawn((
         Mesh3d(meshes.add(to_bevy_mesh(tree_mesh))),
         MeshMaterial3d(materials.add(StandardMaterial {
@@ -77,7 +91,8 @@ fn spin(time: Res<Time>, mut query: Query<&mut Transform, With<Spin>>) {
 
 /// A stand-in until the growth simulator exists: every bud grows each step,
 /// bent upward a little, with shorter internodes on higher-order branches.
-fn test_tree() -> Tree {
+/// Buds that would grow into `habitat`'s occupied space stay dormant.
+fn test_tree(habitat: &impl Habitat) -> Tree {
     const STEPS: u32 = 7;
     const MAX_ORDER: u16 = 3;
     let species = Arc::new(TreeSpecies::default());
@@ -94,7 +109,13 @@ fn test_tree() -> Tree {
             .collect();
         for (id, slot, direction, order) in buds {
             let direction = direction + 0.3 * glam::Vec3::Y;
-            tree.grow(id, slot, direction, internode * 0.8f32.powi(order.into()));
+            tree.grow(
+                habitat,
+                id,
+                slot,
+                direction,
+                internode * 0.8f32.powi(order.into()),
+            );
         }
         tree.advance_step();
     }

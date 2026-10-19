@@ -14,6 +14,7 @@ use std::sync::Arc;
 
 use glam::Vec3;
 
+use crate::habitat::Habitat;
 use crate::node::{NodeId, Slot, SlotIndex, TreeNode};
 use crate::species::{SpeciesError, TreeSpecies};
 
@@ -124,12 +125,15 @@ impl Tree {
 
     /// Grows the bud in `slot` of `parent` into a new internode.
     ///
-    /// Returns `None` if `parent` was pruned or the slot holds no bud, and
-    /// panics if `slot` is `Lateral(i)` with `i > 1`.
+    /// Returns `None` if `parent` was pruned, the slot holds no bud, or
+    /// `habitat` reports the new node's tip as occupied; a blocked bud stays
+    /// in its slot, so it can grow later in another direction. Panics if
+    /// `slot` is `Lateral(i)` with `i > 1`.
     /// The new node gets fresh buds placed by phyllotaxis and inherits the
     /// parent's species. `direction` need not be unit length but must not be zero.
     pub fn grow(
         &mut self,
+        habitat: &(impl Habitat + ?Sized),
         parent: NodeId,
         slot: SlotIndex,
         direction: Vec3,
@@ -139,16 +143,20 @@ impl Tree {
         let step = self.step;
         let p = self.get_mut(parent)?;
         p.slot(slot).bud()?;
+        let heading = direction.normalize();
+        let position = p.position + heading * length;
+        if habitat.occupied(position) {
+            return None;
+        }
         *p.slot_mut(slot) = Slot::Child(id);
         let order = match slot {
             SlotIndex::Main => p.order,
             SlotIndex::Lateral(_) => p.order + 1,
         };
-        let heading = direction.normalize();
         let child = TreeNode::new(
             Arc::clone(&p.species),
             Some(parent),
-            p.position + heading * length,
+            position,
             heading,
             p.heading,
             p.lateral,
@@ -212,6 +220,7 @@ impl Tree {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::habitat::OpenAir;
     use crate::species::BranchingPattern;
 
     fn tree(species: TreeSpecies) -> Tree {
@@ -234,10 +243,12 @@ mod tests {
         let mut t = tree(TreeSpecies::default());
         let root = t.root();
         let dir = t.node(root).main.bud().unwrap().direction;
-        let a = t.grow(root, SlotIndex::Main, dir, 1.0).unwrap();
-        let b = t.grow(root, SlotIndex::Lateral(0), Vec3::X, 1.0).unwrap();
+        let a = t.grow(&OpenAir, root, SlotIndex::Main, dir, 1.0).unwrap();
+        let b = t
+            .grow(&OpenAir, root, SlotIndex::Lateral(0), Vec3::X, 1.0)
+            .unwrap();
         assert!(
-            t.grow(root, SlotIndex::Main, dir, 1.0).is_none(),
+            t.grow(&OpenAir, root, SlotIndex::Main, dir, 1.0).is_none(),
             "slot already used"
         );
         assert_eq!(t.node(root).children().collect::<Vec<_>>(), vec![a, b]);
@@ -252,10 +263,13 @@ mod tests {
     fn fold_up_counts_and_prune_removes_subtree() {
         let mut t = tree(TreeSpecies::default());
         let root = t.root();
-        let a = t.grow(root, SlotIndex::Main, Vec3::Y, 1.0).unwrap();
-        let b = t.grow(a, SlotIndex::Main, Vec3::Y, 1.0).unwrap();
-        t.grow(a, SlotIndex::Lateral(0), Vec3::X, 1.0).unwrap();
-        t.grow(b, SlotIndex::Main, Vec3::Y, 1.0).unwrap();
+        let a = t
+            .grow(&OpenAir, root, SlotIndex::Main, Vec3::Y, 1.0)
+            .unwrap();
+        let b = t.grow(&OpenAir, a, SlotIndex::Main, Vec3::Y, 1.0).unwrap();
+        t.grow(&OpenAir, a, SlotIndex::Lateral(0), Vec3::X, 1.0)
+            .unwrap();
+        t.grow(&OpenAir, b, SlotIndex::Main, Vec3::Y, 1.0).unwrap();
 
         let counts = t.fold_up(|_, kids| 1 + kids.sum::<u32>());
         assert_eq!(counts[root.index()], Some(5));
@@ -276,7 +290,7 @@ mod tests {
                 .flat_map(|(id, n)| n.buds().map(move |(s, b)| (id, s, b.direction)))
                 .collect();
             for (id, slot, dir) in buds {
-                t.grow(id, slot, dir, 1.0);
+                t.grow(&OpenAir, id, slot, dir, 1.0);
             }
             t.advance_step();
         }
@@ -351,14 +365,41 @@ mod tests {
     fn ids_are_never_reused_after_prune() {
         let mut t = tree(TreeSpecies::default());
         let root = t.root();
-        let a = t.grow(root, SlotIndex::Main, Vec3::Y, 1.0).unwrap();
+        let a = t
+            .grow(&OpenAir, root, SlotIndex::Main, Vec3::Y, 1.0)
+            .unwrap();
         t.prune(a);
         // The pruned slot is empty, not a bud, so it cannot regrow.
-        assert!(t.grow(root, SlotIndex::Main, Vec3::Y, 1.0).is_none());
-        let b = t.grow(root, SlotIndex::Lateral(0), Vec3::X, 1.0).unwrap();
+        assert!(
+            t.grow(&OpenAir, root, SlotIndex::Main, Vec3::Y, 1.0)
+                .is_none()
+        );
+        let b = t
+            .grow(&OpenAir, root, SlotIndex::Lateral(0), Vec3::X, 1.0)
+            .unwrap();
         assert_ne!(a, b);
         assert!(t.get(a).is_none());
         assert_eq!(t.prune(root), 0, "root cannot be pruned");
+    }
+
+    #[test]
+    fn grow_refuses_occupied_space_and_keeps_the_bud() {
+        let mut t = tree(TreeSpecies::default());
+        let root = t.root();
+        let tip_y = t.node(root).position.y;
+        // A ceiling just above the seedling's tip.
+        let ceiling = move |p: Vec3| p.y > tip_y + 0.5;
+        assert!(
+            t.grow(&ceiling, root, SlotIndex::Main, Vec3::Y, 1.0)
+                .is_none()
+        );
+        assert!(t.node(root).main.bud().is_some(), "blocked bud stays put");
+        assert_eq!(t.len(), 1);
+        // The same bud can still grow sideways under the ceiling.
+        let a = t
+            .grow(&ceiling, root, SlotIndex::Main, Vec3::X, 1.0)
+            .unwrap();
+        assert!(!ceiling(t.node(a).position));
     }
 
     #[test]

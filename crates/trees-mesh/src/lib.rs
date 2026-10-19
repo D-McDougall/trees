@@ -87,7 +87,7 @@ fn wireframe(tree: &Tree) -> TreeMesh {
 mod tests {
     use std::sync::Arc;
 
-    use trees_core::{SlotIndex, TreeSpecies};
+    use trees_core::{OpenAir, SlotIndex, TreeSpecies};
 
     use super::*;
 
@@ -120,9 +120,13 @@ mod tests {
     fn each_internode_joins_parent_tip_to_its_tip() {
         let mut t = seedling();
         let root = t.root();
-        let a = t.grow(root, SlotIndex::Main, Vec3::Y, 1.0).unwrap();
-        let b = t.grow(root, SlotIndex::Lateral(0), Vec3::X, 1.0).unwrap();
-        let c = t.grow(a, SlotIndex::Main, Vec3::Y, 1.0).unwrap();
+        let a = t
+            .grow(&OpenAir, root, SlotIndex::Main, Vec3::Y, 1.0)
+            .unwrap();
+        let b = t
+            .grow(&OpenAir, root, SlotIndex::Lateral(0), Vec3::X, 1.0)
+            .unwrap();
+        let c = t.grow(&OpenAir, a, SlotIndex::Main, Vec3::Y, 1.0).unwrap();
         let mesh = build_mesh(&t, &MeshOptions::default());
 
         // Shared vertices: one per node plus the root's base.
@@ -143,10 +147,14 @@ mod tests {
     fn pruned_nodes_leave_no_geometry() {
         let mut t = seedling();
         let root = t.root();
-        let a = t.grow(root, SlotIndex::Main, Vec3::Y, 1.0).unwrap();
-        t.grow(a, SlotIndex::Main, Vec3::Y, 1.0).unwrap();
-        let b = t.grow(root, SlotIndex::Lateral(0), Vec3::X, 1.0).unwrap();
-        let d = t.grow(b, SlotIndex::Main, Vec3::X, 1.0).unwrap();
+        let a = t
+            .grow(&OpenAir, root, SlotIndex::Main, Vec3::Y, 1.0)
+            .unwrap();
+        t.grow(&OpenAir, a, SlotIndex::Main, Vec3::Y, 1.0).unwrap();
+        let b = t
+            .grow(&OpenAir, root, SlotIndex::Lateral(0), Vec3::X, 1.0)
+            .unwrap();
+        let d = t.grow(&OpenAir, b, SlotIndex::Main, Vec3::X, 1.0).unwrap();
         t.prune(a);
 
         let mesh = build_mesh(&t, &MeshOptions::default());
