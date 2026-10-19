@@ -183,9 +183,15 @@ impl TreeNode {
         let arch = &species.architecture;
         let heading = heading.normalize();
         let lateral = Quat::from_axis_angle(heading, arch.divergence_angle) * lateral_hint;
-        let lateral = (lateral - heading * lateral.dot(heading))
-            .try_normalize()
-            .unwrap_or_else(|| heading.any_orthonormal_vector());
+        // A hint (nearly) parallel to the heading leaves only rounding error
+        // after projection, which would normalize to a non-perpendicular
+        // vector, so fall back to an arbitrary perpendicular instead.
+        let projected = lateral - heading * lateral.dot(heading);
+        let lateral = if projected.length_squared() > 1e-6 * lateral.length_squared() {
+            projected.normalize()
+        } else {
+            heading.any_orthonormal_vector()
+        };
 
         // b_main = cos δ·h − sin δ·l ; b_lat = cos ψ·h ± sin ψ·l
         let (sin_d, cos_d) = arch.deflection_angle.sin_cos();
