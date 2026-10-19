@@ -34,6 +34,7 @@ impl BranchingPattern {
 /// Local branching geometry: the architectural part of the model.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Architecture {
+    /// One or two lateral buds per node.
     pub branching: BranchingPattern,
     /// Divergence (phyllotaxis) angle φ between successive nodes, in radians.
     /// The golden angle (≈137.5°) is the usual default.
@@ -59,8 +60,11 @@ pub enum VigorModel {
     /// `w_min` over the top `top_fraction` of ranks. Better for animating a
     /// tree that loses apical control with age.
     Priority {
+        /// Weight of the best-lit branch on an axis.
         w_max: f32,
+        /// Weight of every branch ranked below `top_fraction`.
         w_min: f32,
+        /// Fraction of ranks, in (0, 1], over which the weight falls.
         top_fraction: f32,
     },
 }
@@ -68,6 +72,7 @@ pub enum VigorModel {
 /// How light becomes vigor and vigor becomes shoots.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Vigor {
+    /// How vigor splits at each branch point.
     pub model: VigorModel,
     /// Apical control λ in [0, 1]. Above 0.5 favours the main axis (clear
     /// trunk, excurrent); below 0.5 favours laterals (spreading, decurrent).
@@ -94,11 +99,14 @@ pub struct Tropism {
     /// Set-point for the main (order 0) axis. `0.0` with plagiotropic
     /// laterals gives conifer forms.
     pub main_set_point: f32,
-    /// Barycentric weights (α, β, γ) of H' = αH + βT + γE: keep the current
-    /// heading, turn toward the set-point, head toward won markers. Must sum
-    /// to 1; this is what the UI's triangle widget edits.
+    // The three weights below are the barycentric (α, β, γ) of
+    // H' = αH + βT + γE. They must be non-negative and sum to 1; this is
+    // what the UI's triangle widget edits.
+    /// Weight α of the current heading H (straight growth).
     pub straightness: f32,
+    /// Weight β of the set-point direction T (gravitropism).
     pub gravitropism: f32,
+    /// Weight γ of the direction E toward won markers (space colonization).
     pub environment: f32,
 }
 
@@ -146,6 +154,7 @@ pub struct Shadow {
 /// Branch shedding (self-pruning).
 #[derive(Clone, Debug, PartialEq)]
 pub struct Shedding {
+    /// Whether branches are shed at all.
     pub enabled: bool,
     /// A branch is shed when its gathered light per internode falls below this.
     pub light_per_internode_threshold: f32,
@@ -167,14 +176,23 @@ pub struct Thickness {
 /// then call [`TreeSpecies::validate`] before sharing it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct TreeSpecies {
+    /// Display name, for the UI and error messages.
     pub name: String,
+    /// Phyllotaxis and branch angles.
     pub architecture: Architecture,
+    /// Light-to-vigor allocation and shoot growth.
     pub vigor: Vigor,
+    /// Shoot direction blending.
     pub tropism: Tropism,
+    /// Bud propensity around a parent branch.
     pub gravimorphism: Gravimorphism,
+    /// Space colonization markers and perception.
     pub space: SpaceColonization,
+    /// Shadow propagation on the light grid.
     pub shadow: Shadow,
+    /// Self-pruning of shaded branches.
     pub shedding: Shedding,
+    /// Pipe-model branch radii.
     pub thickness: Thickness,
 }
 
@@ -331,12 +349,16 @@ impl TreeSpecies {
 /// Why a [`TreeSpecies`] failed validation.
 #[derive(Clone, Debug, PartialEq)]
 pub enum SpeciesError {
+    /// A parameter is outside its documented range, or is not finite.
     OutOfRange {
+        /// Path of the parameter, e.g. `"vigor.apical_control"`.
         field: &'static str,
+        /// The rejected value.
         value: f32,
     },
     /// The barycentric direction weights must be non-negative and sum to 1.
     TropismWeights {
+        /// The sum of the three weights as given.
         sum: f32,
     },
 }

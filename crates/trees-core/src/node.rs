@@ -19,6 +19,8 @@ use crate::species::TreeSpecies;
 pub struct NodeId(pub(crate) u32);
 
 impl NodeId {
+    /// Position in the arena, for indexing per-node arrays such as the
+    /// output of [`Tree::fold_up`](crate::Tree::fold_up).
     pub fn index(self) -> usize {
         self.0 as usize
     }
@@ -43,6 +45,7 @@ pub enum BudFate {
 pub struct Bud {
     /// Default growth direction (unit), set from phyllotaxis when the bud forms.
     pub direction: Vec3,
+    /// Whether the bud grows, waits or is dead this step.
     pub fate: BudFate,
     /// Number of attraction markers this bud won this step.
     pub marker_count: u32,
@@ -57,6 +60,7 @@ pub struct Bud {
 }
 
 impl Bud {
+    /// A dormant bud pointing along `direction`, with cleared scratch fields.
     pub fn new(direction: Vec3) -> Self {
         Bud {
             direction,
@@ -82,11 +86,14 @@ pub enum Slot {
     /// Nothing here: an unused lateral slot (alternate branching uses one of
     /// two), or a branch that was shed or pruned.
     Empty,
+    /// A live or aborted bud that has not grown.
     Bud(Bud),
+    /// The bud grew into this node.
     Child(NodeId),
 }
 
 impl Slot {
+    /// The child node, if the bud here has grown.
     pub fn child(&self) -> Option<NodeId> {
         match self {
             Slot::Child(id) => Some(*id),
@@ -94,6 +101,7 @@ impl Slot {
         }
     }
 
+    /// The bud, if this slot still holds one.
     pub fn bud(&self) -> Option<&Bud> {
         match self {
             Slot::Bud(b) => Some(b),
@@ -101,6 +109,7 @@ impl Slot {
         }
     }
 
+    /// Mutable access to the bud, if this slot still holds one.
     pub fn bud_mut(&mut self) -> Option<&mut Bud> {
         match self {
             Slot::Bud(b) => Some(b),
@@ -114,7 +123,7 @@ impl Slot {
 pub enum SlotIndex {
     /// The terminal bud / continuing axis.
     Main,
-    /// Lateral 0 or 1.
+    /// Lateral 0 or 1. Higher indices make [`TreeNode::slot`] panic.
     Lateral(u8),
 }
 
@@ -139,6 +148,7 @@ pub struct TreeNode {
     /// rotated by the divergence angle at each node, which is what produces
     /// phyllotaxis. Together with `heading` it fixes the full frame.
     pub lateral: Vec3,
+    /// Length of the internode, from [`TreeNode::base`] to `position`.
     pub length: f32,
     /// Current radius from the pipe model. Never decreases, so trunks keep the
     /// thickness of branches that were later shed.
@@ -232,6 +242,9 @@ impl TreeNode {
         self.heading.cross(self.lateral)
     }
 
+    /// The slot named by `index`.
+    ///
+    /// Panics if `index` is `Lateral(i)` with `i > 1`.
     pub fn slot(&self, index: SlotIndex) -> &Slot {
         match index {
             SlotIndex::Main => &self.main,
@@ -239,6 +252,7 @@ impl TreeNode {
         }
     }
 
+    /// Mutable access to the slot named by `index`; panics like [`TreeNode::slot`].
     pub fn slot_mut(&mut self, index: SlotIndex) -> &mut Slot {
         match index {
             SlotIndex::Main => &mut self.main,

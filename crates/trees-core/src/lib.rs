@@ -10,6 +10,8 @@
 //!   another node or a [`Bud`], so buds need no separate storage.
 //! - [`Tree`]: an arena that owns the nodes and hands out [`NodeId`]s.
 
+#![warn(missing_docs)]
+
 pub mod node;
 pub mod species;
 pub mod tree;

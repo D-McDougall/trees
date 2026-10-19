@@ -17,6 +17,10 @@ use glam::Vec3;
 use crate::node::{NodeId, Slot, SlotIndex, TreeNode};
 use crate::species::{SpeciesError, TreeSpecies};
 
+/// One tree: its species, its seed, and the arena of its nodes.
+///
+/// The root is created with the tree and can never be pruned, so a tree is
+/// never empty and [`Tree::root`] is always valid.
 #[derive(Clone, Debug)]
 pub struct Tree {
     species: Arc<TreeSpecies>,
@@ -55,14 +59,17 @@ impl Tree {
         })
     }
 
+    /// The species every node of this tree grows by.
     pub fn species(&self) -> &Arc<TreeSpecies> {
         &self.species
     }
 
+    /// Seed for this tree's position-hashed randomness.
     pub fn seed(&self) -> u64 {
         self.seed
     }
 
+    /// Number of completed growth steps; new nodes record it as `birth_step`.
     pub fn step(&self) -> u32 {
         self.step
     }
@@ -72,6 +79,7 @@ impl Tree {
         self.step += 1;
     }
 
+    /// The first internode, grown by [`Tree::new`].
     pub fn root(&self) -> NodeId {
         NodeId(0)
     }
@@ -81,14 +89,17 @@ impl Tree {
         self.live
     }
 
+    /// Always false, since the root cannot be pruned; present to pair with [`Tree::len`].
     pub fn is_empty(&self) -> bool {
         self.live == 0
     }
 
+    /// The node with `id`, or `None` if it was pruned or shed.
     pub fn get(&self, id: NodeId) -> Option<&TreeNode> {
         self.nodes.get(id.index())?.as_ref()
     }
 
+    /// Mutable access to the node with `id`, or `None` if it was pruned or shed.
     pub fn get_mut(&mut self, id: NodeId) -> Option<&mut TreeNode> {
         self.nodes.get_mut(id.index())?.as_mut()
     }
@@ -98,6 +109,7 @@ impl Tree {
         self.get(id).expect("node was pruned")
     }
 
+    /// Mutable access to a live node; panics like [`Tree::node`].
     pub fn node_mut(&mut self, id: NodeId) -> &mut TreeNode {
         self.get_mut(id).expect("node was pruned")
     }
@@ -112,8 +124,10 @@ impl Tree {
 
     /// Grows the bud in `slot` of `parent` into a new internode.
     ///
-    /// Returns `None` if the slot holds no bud. The new node gets fresh buds
-    /// placed by phyllotaxis and inherits the parent's species.
+    /// Returns `None` if `parent` was pruned or the slot holds no bud, and
+    /// panics if `slot` is `Lateral(i)` with `i > 1`.
+    /// The new node gets fresh buds placed by phyllotaxis and inherits the
+    /// parent's species. `direction` need not be unit length but must not be zero.
     pub fn grow(
         &mut self,
         parent: NodeId,
