@@ -272,3 +272,117 @@ impl TreeNode {
         self.children().next().is_none()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::species::BranchingPattern;
+
+    const EPS: f32 = 1e-5;
+
+    fn node(species: TreeSpecies, heading: Vec3, hint: Vec3) -> TreeNode {
+        TreeNode::new(
+            Arc::new(species),
+            None,
+            Vec3::ZERO,
+            heading,
+            hint,
+            1.0,
+            0,
+            0,
+        )
+    }
+
+    fn opposite() -> TreeSpecies {
+        let mut s = TreeSpecies::default();
+        s.architecture.branching = BranchingPattern::Opposite;
+        s
+    }
+
+    #[test]
+    fn frame_is_orthonormal() {
+        for heading in [Vec3::Y, Vec3::new(1.0, 2.0, -0.5), -Vec3::X] {
+            // A hint parallel to the heading must still yield a valid frame.
+            for hint in [Vec3::X, Vec3::Z, heading] {
+                let n = node(TreeSpecies::default(), heading, hint);
+                assert!((n.heading.length() - 1.0).abs() < EPS);
+                assert!((n.lateral.length() - 1.0).abs() < EPS);
+                assert!(n.heading.dot(n.lateral).abs() < EPS);
+                assert!((n.binormal().length() - 1.0).abs() < EPS);
+            }
+        }
+    }
+
+    #[test]
+    fn bud_directions_are_unit_and_at_species_angles() {
+        let s = opposite();
+        let (psi, delta) = (
+            s.architecture.branching_angle,
+            s.architecture.deflection_angle,
+        );
+        let n = node(s, Vec3::new(0.3, 1.0, 0.2), Vec3::X);
+        let main = n.main.bud().unwrap().direction;
+        assert!((main.length() - 1.0).abs() < EPS);
+        assert!((main.angle_between(n.heading) - delta).abs() < 1e-4);
+        for slot in &n.laterals {
+            let d = slot.bud().unwrap().direction;
+            assert!((d.length() - 1.0).abs() < EPS);
+            assert!((d.angle_between(n.heading) - psi).abs() < 1e-4);
+        }
+    }
+
+    #[test]
+    fn opposite_laterals_mirror_about_heading() {
+        let n = node(opposite(), Vec3::Y, Vec3::X);
+        let a = n.laterals[0].bud().unwrap().direction;
+        let b = n.laterals[1].bud().unwrap().direction;
+        // Same component along the heading, opposite components across it.
+        assert!((a.dot(n.heading) - b.dot(n.heading)).abs() < EPS);
+        let across = |d: Vec3| d - n.heading * d.dot(n.heading);
+        assert!((across(a) + across(b)).length() < EPS);
+    }
+
+    #[test]
+    fn main_bud_deflects_away_from_lateral() {
+        let n = node(TreeSpecies::default(), Vec3::Y, Vec3::X);
+        let main = n.main.bud().unwrap().direction;
+        let lat = n.laterals[0].bud().unwrap().direction;
+        assert!(main.dot(n.lateral) < 0.0 && lat.dot(n.lateral) > 0.0);
+        // Deflection stays in the heading-lateral plane.
+        assert!(main.dot(n.binormal()).abs() < EPS);
+    }
+
+    #[test]
+    fn lateral_rotates_by_divergence_angle() {
+        let s = TreeSpecies::default();
+        let phi = s.architecture.divergence_angle;
+        let n = node(s, Vec3::Y, Vec3::X);
+        // Signed angle from the hint to the lateral, measured about the heading.
+        let signed = Vec3::X
+            .cross(n.lateral)
+            .dot(n.heading)
+            .atan2(Vec3::X.dot(n.lateral));
+        assert!((signed.rem_euclid(std::f32::consts::TAU) - phi).abs() < 1e-4);
+    }
+
+    #[test]
+    fn alternate_branching_leaves_second_lateral_empty() {
+        let n = node(TreeSpecies::default(), Vec3::Y, Vec3::X);
+        assert_eq!(n.laterals[1], Slot::Empty);
+        assert_eq!(n.slots().count(), 2);
+        assert_eq!(node(opposite(), Vec3::Y, Vec3::X).slots().count(), 3);
+    }
+
+    #[test]
+    fn environment_direction_is_normalized_marker_sum() {
+        let mut b = Bud::new(Vec3::Y);
+        assert_eq!(b.environment_direction(), None);
+        b.marker_count = 2;
+        b.marker_direction_sum = Vec3::X + Vec3::Z;
+        let e = b.environment_direction().unwrap();
+        assert!((e - Vec3::new(1.0, 0.0, 1.0).normalize()).length() < EPS);
+        // Markers on opposite sides cancel: no preferred direction.
+        b.marker_direction_sum = Vec3::ZERO;
+        assert_eq!(b.environment_direction(), None);
+    }
+}

@@ -251,6 +251,100 @@ mod tests {
         assert_eq!(t.fold_up(|_, kids| 1 + kids.sum::<u32>())[0], Some(1));
     }
 
+    /// Grows every bud for `steps` steps along its default direction.
+    fn bushy(steps: u32) -> Tree {
+        let mut t = tree(TreeSpecies::default());
+        for _ in 0..steps {
+            let buds: Vec<_> = t
+                .iter()
+                .flat_map(|(id, n)| n.buds().map(move |(s, b)| (id, s, b.direction)))
+                .collect();
+            for (id, slot, dir) in buds {
+                t.grow(id, slot, dir, 1.0);
+            }
+            t.advance_step();
+        }
+        t
+    }
+
+    #[test]
+    fn seedling_stands_on_origin() {
+        let origin = Vec3::new(3.0, -1.0, 2.0);
+        let t = Tree::new(Arc::new(TreeSpecies::default()), 0, origin).unwrap();
+        let root = t.node(t.root());
+        assert!((root.base() - origin).length() < 1e-6);
+        assert_eq!(root.heading, Vec3::Y);
+    }
+
+    #[test]
+    fn internodes_connect_and_record_order_and_age() {
+        let t = bushy(4);
+        for (id, n) in t.iter() {
+            let Some(p) = n.parent else { continue };
+            let p = t.node(p);
+            assert!(p.children().any(|c| c == id));
+            // Each internode starts exactly at its parent's tip.
+            assert!((n.base() - p.position).length() < 1e-5);
+            let is_main = p.main.child() == Some(id);
+            assert_eq!(n.order, p.order + u16::from(!is_main));
+            assert!(n.birth_step >= p.birth_step);
+        }
+    }
+
+    #[test]
+    fn fold_up_matches_recursion_after_pruning() {
+        fn count(t: &Tree, id: NodeId) -> u32 {
+            1 + t.node(id).children().map(|c| count(t, c)).sum::<u32>()
+        }
+        let mut t = bushy(5);
+        let victim = t.iter().nth(3).unwrap().0;
+        t.prune(victim);
+        let folded = t.fold_up(|_, kids| 1 + kids.sum::<u32>());
+        for (id, _) in t.iter() {
+            assert_eq!(folded[id.index()], Some(count(&t, id)));
+        }
+        assert_eq!(folded[t.root().index()], Some(t.len() as u32));
+    }
+
+    #[test]
+    fn fold_up_pipe_model_conserves_cross_section() {
+        // rⁿ = Σ r_iⁿ (Pałubicki 2009), so the root's rⁿ is the number of
+        // tips times r_tipⁿ, for any pipe exponent.
+        let t = bushy(4);
+        let tips = t.iter().filter(|(_, n)| n.is_terminal()).count() as f32;
+        let r_tip = t.species().thickness.tip_radius;
+        for n in [2.0f32, 2.5, 3.0] {
+            let radii = t.fold_up(|node, kids| {
+                let sum: f32 = kids.map(|r: &f32| r.powf(n)).sum();
+                if node.is_terminal() {
+                    r_tip
+                } else {
+                    sum.powf(1.0 / n)
+                }
+            });
+            let root = radii[t.root().index()].unwrap();
+            assert!((root.powf(n) / (tips * r_tip.powf(n)) - 1.0).abs() < 1e-4);
+            for (id, node) in t.iter() {
+                let r = radii[id.index()].unwrap();
+                assert!(node.children().all(|c| radii[c.index()].unwrap() <= r));
+            }
+        }
+    }
+
+    #[test]
+    fn ids_are_never_reused_after_prune() {
+        let mut t = tree(TreeSpecies::default());
+        let root = t.root();
+        let a = t.grow(root, SlotIndex::Main, Vec3::Y, 1.0).unwrap();
+        t.prune(a);
+        // The pruned slot is empty, not a bud, so it cannot regrow.
+        assert!(t.grow(root, SlotIndex::Main, Vec3::Y, 1.0).is_none());
+        let b = t.grow(root, SlotIndex::Lateral(0), Vec3::X, 1.0).unwrap();
+        assert_ne!(a, b);
+        assert!(t.get(a).is_none());
+        assert_eq!(t.prune(root), 0, "root cannot be pruned");
+    }
+
     #[test]
     fn validation_rejects_bad_weights() {
         let mut s = TreeSpecies::conifer();

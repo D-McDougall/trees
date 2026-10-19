@@ -356,3 +356,79 @@ impl fmt::Display for SpeciesError {
 }
 
 impl std::error::Error for SpeciesError {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn golden_angle_is_two_pi_over_phi_squared() {
+        let phi = (1.0 + 5f64.sqrt()) / 2.0;
+        let golden = std::f64::consts::TAU * (1.0 - 1.0 / phi);
+        assert!((GOLDEN_ANGLE as f64 - golden).abs() < 1e-6);
+        assert!((GOLDEN_ANGLE.to_degrees() - 137.508).abs() < 1e-3);
+    }
+
+    #[test]
+    fn presets_are_valid_and_follow_the_papers() {
+        for s in [TreeSpecies::default(), TreeSpecies::conifer()] {
+            assert_eq!(s.validate(), Ok(()), "{}", s.name);
+            let l = s.architecture.internode_length;
+            // Pałubicki 2009: ρ ≈ 2 internodes, r ≈ 4–6 internodes, θ ≈ 90° cone.
+            assert!((s.space.occupancy_radius / l - 2.0).abs() < 1e-6);
+            assert!((4.0..=6.0).contains(&(s.space.perception_distance / l)));
+            assert!((s.space.perception_angle.to_degrees() * 2.0 - 90.0).abs() < 1e-3);
+        }
+        // Conifers are excurrent (λ > 0.5) and more so than the broadleaf.
+        let (b, c) = (TreeSpecies::default(), TreeSpecies::conifer());
+        assert!(c.vigor.apical_control > 0.5);
+        assert!(c.vigor.apical_control > b.vigor.apical_control);
+        assert!(c.tropism.lateral_set_point > b.tropism.lateral_set_point);
+    }
+
+    #[test]
+    fn validation_enforces_parameter_ranges() {
+        let bad: [fn(&mut TreeSpecies); 9] = [
+            |s| s.vigor.apical_control = 1.01,
+            |s| s.vigor.apical_control = -0.01,
+            |s| s.vigor.light_exponent = -1.0,
+            |s| s.vigor.max_shoot_length = 0,
+            |s| s.thickness.pipe_exponent = 1.9,
+            |s| s.thickness.pipe_exponent = 3.1,
+            |s| s.shadow.falloff = 1.0,
+            |s| s.space.perception_distance = s.space.occupancy_radius,
+            |s| s.architecture.internode_length = f32::NAN,
+        ];
+        for (i, edit) in bad.iter().enumerate() {
+            let mut s = TreeSpecies::default();
+            edit(&mut s);
+            assert!(s.validate().is_err(), "edit {i} should be rejected");
+        }
+        // The documented range ends are allowed.
+        let mut s = TreeSpecies::default();
+        s.vigor.apical_control = 0.0;
+        s.thickness.pipe_exponent = 3.0;
+        assert_eq!(s.validate(), Ok(()));
+    }
+
+    #[test]
+    fn tropism_weights_must_be_barycentric() {
+        let mut s = TreeSpecies::default();
+        (
+            s.tropism.straightness,
+            s.tropism.gravitropism,
+            s.tropism.environment,
+        ) = (1.0, 0.0, 0.0);
+        assert_eq!(s.validate(), Ok(()));
+        // Sums to 1 but has a negative weight.
+        (
+            s.tropism.straightness,
+            s.tropism.gravitropism,
+            s.tropism.environment,
+        ) = (1.2, -0.2, 0.0);
+        assert!(matches!(
+            s.validate(),
+            Err(SpeciesError::TropismWeights { .. })
+        ));
+    }
+}
