@@ -314,7 +314,7 @@ impl TreeSpecies {
         let sum = t.straightness + t.gravitropism + t.environment;
         if [t.straightness, t.gravitropism, t.environment]
             .iter()
-            .any(|w| *w < 0.0)
+            .any(|w| !w.is_finite() || *w < 0.0)
             || (sum - 1.0).abs() > 1e-4
         {
             return Err(SpeciesError::TropismWeights { sum });
@@ -448,6 +448,16 @@ mod tests {
             s.tropism.gravitropism,
             s.tropism.environment,
         ) = (1.2, -0.2, 0.0);
+        assert!(matches!(
+            s.validate(),
+            Err(SpeciesError::TropismWeights { .. })
+        ));
+        // NaN compares false both ways, so it must not slip through.
+        (
+            s.tropism.straightness,
+            s.tropism.gravitropism,
+            s.tropism.environment,
+        ) = (f32::NAN, 0.0, 0.0);
         assert!(matches!(
             s.validate(),
             Err(SpeciesError::TropismWeights { .. })
