@@ -1,0 +1,9 @@
+[package]
+name = "trees"
+version = "0.1.0"
+edition = "2024"
+description = "Self-organizing procedural tree generator (core data structures)"
+publish = false
+
+[dependencies]
+glam = "0.29"
