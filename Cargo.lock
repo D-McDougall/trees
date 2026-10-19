@@ -5690,6 +5690,7 @@ version = "0.1.0"
 dependencies = [
  "bevy",
  "bevy_egui",
+ "glam",
  "trees-core",
  "trees-mesh",
 ]
