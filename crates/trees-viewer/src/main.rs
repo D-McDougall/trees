@@ -1,5 +1,6 @@
 //! Minimal Bevy viewer: grows a small test tree with a fixed rule (there is
-//! no growth simulator yet) and draws its tube mesh. Drag to orbit the
+//! no growth simulator yet) and draws its tube mesh. A side panel edits the
+//! seed and species, regrowing the tree on every change. Drag to orbit the
 //! camera, right-drag to pan and scroll to zoom.
 //!
 //! Native: `cargo run -p trees-viewer`
@@ -8,13 +9,20 @@
 use std::sync::Arc;
 
 use bevy::asset::RenderAssetUsages;
+use bevy::camera::visibility::RenderLayers;
+use bevy::camera::{CameraOutputMode, ClearColorConfig};
 use bevy::camera_controller::pan_orbit_camera::prelude::PanOrbitCamera;
 use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::prelude::*;
-use trees_core::{Habitat, Tree, TreeSpecies};
+use bevy::render::render_resource::BlendState;
+use bevy_egui::{EguiGlobalSettings, EguiPlugin, PrimaryEguiContext};
+use trees_core::{Habitat, SlotIndex, Tree, TreeSpecies};
 use trees_mesh::{MeshOptions, MeshStyle, Topology, TreeMesh, TubeOptions, build_mesh};
 
+use editor::{GrowError, TreeParams};
+
 mod camera;
+mod editor;
 
 fn main() {
     App::new()
@@ -29,8 +37,10 @@ fn main() {
             }),
             ..default()
         }))
-        .add_plugins(camera::CameraControlsPlugin)
+        .add_plugins(EguiPlugin::default())
+        .add_plugins((camera::CameraControlsPlugin, editor::EditorPlugin))
         .add_systems(Startup, setup)
+        .add_systems(Update, regrow.run_if(resource_changed::<TreeParams>))
         .run();
 }
 
@@ -39,6 +49,7 @@ const TREE_ROOT: Vec3 = Vec3::ZERO;
 
 /// The viewer's world as the growth logic sees it: everything below the
 /// ground plane is solid.
+#[derive(Resource)]
 struct Scene {
     ground_height: f32,
 }
@@ -49,10 +60,15 @@ impl Habitat for Scene {
     }
 }
 
+/// Marks the entity showing the tree; [`regrow`] replaces its mesh.
+#[derive(Component)]
+struct TreeView;
+
 fn setup(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut egui_settings: ResMut<EguiGlobalSettings>,
 ) {
     let scene = Scene { ground_height: 0.0 };
     // Ground disc
@@ -62,15 +78,13 @@ fn setup(
         Transform::from_rotation(Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2))
             .with_translation(Vec3::Y * scene.ground_height),
     ));
-    // Test tree
-    let options = MeshOptions {
-        style: MeshStyle::Tubes(TubeOptions::default()),
-    };
-    let tree_mesh = build_mesh(&test_tree(&scene), &options);
+    // The tree's mesh is filled in by `regrow`.
     commands.spawn((
-        Mesh3d(meshes.add(to_bevy_mesh(tree_mesh))),
+        TreeView,
+        Mesh3d::default(),
         MeshMaterial3d(materials.add(Color::srgb(0.45, 0.32, 0.22))),
     ));
+    commands.insert_resource(scene);
     commands.spawn((
         PointLight {
             shadow_maps_enabled: true,
@@ -85,17 +99,63 @@ fn setup(
         PanOrbitCamera::default().with_initial_anchor_depth(eye.distance(TREE_ROOT).into()),
         Transform::from_translation(eye).looking_at(TREE_ROOT, Vec3::Y),
     ));
+    // The panel gets its own camera drawn over the scene, so that shrinking
+    // the scene camera's viewport beside the panel does not clip the panel.
+    egui_settings.auto_create_primary_context = false;
+    commands.spawn((
+        PrimaryEguiContext,
+        Camera2d,
+        RenderLayers::none(),
+        Camera {
+            order: 1,
+            output_mode: CameraOutputMode::Write {
+                blend_state: Some(BlendState::ALPHA_BLENDING),
+                clear_color: ClearColorConfig::None,
+            },
+            clear_color: ClearColorConfig::Custom(Color::NONE),
+            ..default()
+        },
+    ));
+}
+
+/// Grows the tree from scratch with the current parameters. Invalid
+/// parameters keep the last tree and report why.
+fn regrow(
+    params: Res<TreeParams>,
+    scene: Res<Scene>,
+    mut error: ResMut<GrowError>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut view: Single<&mut Mesh3d, With<TreeView>>,
+) {
+    let tree = match test_tree(&*scene, params.species.clone(), params.seed) {
+        Ok(tree) => tree,
+        Err(e) => {
+            error.0 = Some(e.to_string());
+            return;
+        }
+    };
+    error.0 = None;
+    let options = MeshOptions {
+        style: MeshStyle::Tubes(TubeOptions::default()),
+    };
+    // Dropping the old handle frees the old mesh.
+    view.0 = meshes.add(to_bevy_mesh(build_mesh(&tree, &options)));
 }
 
 /// A stand-in until the growth simulator exists: every bud grows each step,
-/// bent upward a little, with shorter internodes on higher-order branches.
-/// Buds that would grow into `habitat`'s occupied space stay dormant.
-fn test_tree(habitat: &impl Habitat) -> Tree {
+/// bent upward a little and jittered by `seed`, with shorter internodes on
+/// higher-order branches. Buds that would grow into `habitat`'s occupied
+/// space stay dormant.
+fn test_tree(
+    habitat: &impl Habitat,
+    species: TreeSpecies,
+    seed: u64,
+) -> Result<Tree, trees_core::SpeciesError> {
     const STEPS: u32 = 7;
     const MAX_ORDER: u16 = 3;
-    let species = Arc::new(TreeSpecies::default());
+    const JITTER: f32 = 0.25;
     let internode = species.architecture.internode_length;
-    let mut tree = Tree::new(species, 0, TREE_ROOT).expect("default species is valid");
+    let mut tree = Tree::new(Arc::new(species), seed, TREE_ROOT)?;
     for _ in 0..STEPS {
         let buds: Vec<_> = tree
             .iter()
@@ -106,7 +166,13 @@ fn test_tree(habitat: &impl Habitat) -> Tree {
             })
             .collect();
         for (id, slot, direction, order) in buds {
-            let direction = direction + 0.3 * glam::Vec3::Y;
+            let slot_number = match slot {
+                SlotIndex::Main => 0,
+                SlotIndex::Lateral(i) => i as u64 + 1,
+            };
+            let key = (id.index() as u64) << 2 | slot_number;
+            let jitter = random_vector(seed, key) * JITTER;
+            let direction = direction + 0.3 * glam::Vec3::Y + jitter;
             tree.grow(
                 habitat,
                 id,
@@ -117,7 +183,23 @@ fn test_tree(habitat: &impl Habitat) -> Tree {
         }
         tree.advance_step();
     }
-    tree
+    Ok(tree)
+}
+
+/// A vector with components in [-1, 1), hashed from `seed` and `key` with
+/// SplitMix64, so the same seed always gives the same tree.
+fn random_vector(seed: u64, key: u64) -> glam::Vec3 {
+    let mut state = seed ^ key.wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    let mut next = || {
+        state = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        let mut z = state;
+        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        z ^= z >> 31;
+        // Top 24 bits as a float in [0, 1), mapped to [-1, 1).
+        (z >> 40) as f32 / (1u64 << 24) as f32 * 2.0 - 1.0
+    };
+    glam::Vec3::new(next(), next(), next())
 }
 
 fn to_bevy_mesh(mesh: TreeMesh) -> Mesh {

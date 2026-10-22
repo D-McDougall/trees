@@ -9,12 +9,15 @@
 //! - Orbit: left mouse button + drag
 //! - Pan: right or middle mouse button + drag
 //! - Zoom: mouse wheel
+//!
+//! None of these start while the pointer is over the editor panel.
 
 use bevy::camera_controller::pan_orbit_camera::prelude::*;
 use bevy::input::mouse::{AccumulatedMouseScroll, MouseScrollUnit};
 use bevy::picking::PickingSystems;
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
+use bevy_egui::input::EguiWantsInput;
 
 const ORBIT: MouseButton = MouseButton::Left;
 const PAN: [MouseButton; 2] = [MouseButton::Right, MouseButton::Middle];
@@ -38,6 +41,7 @@ fn mouse_input(
     buttons: Res<ButtonInput<MouseButton>>,
     scroll: Res<AccumulatedMouseScroll>,
     window: Single<&Window, With<PrimaryWindow>>,
+    egui: Res<EguiWantsInput>,
     mut last_cursor: Local<Option<Vec2>>,
     mut cameras: Query<&mut PanOrbitCamera>,
 ) {
@@ -48,7 +52,9 @@ fn mouse_input(
         .zip(*last_cursor)
         .map_or(Vec2::ZERO, |(now, then)| now - then);
     *last_cursor = cursor;
-    let zoom = scroll.delta.y
+    // Scrolling the panel must not zoom the view.
+    let over_panel = egui.wants_pointer_input();
+    let zoom = if over_panel { 0.0 } else { scroll.delta.y }
         * match scroll.unit {
             MouseScrollUnit::Line => 40.0,
             MouseScrollUnit::Pixel => 1.0,
@@ -63,8 +69,8 @@ fn mouse_input(
             camera.end_move();
         }
 
-        // Only a pointer over the window may start a motion.
-        if cursor.is_some() && !camera.is_actively_controlled() {
+        // Only a pointer over the 3D view may start a motion.
+        if cursor.is_some() && !over_panel && !camera.is_actively_controlled() {
             if buttons.just_pressed(ORBIT) {
                 camera.start_orbit(None);
             } else if buttons.any_just_pressed(PAN) {
