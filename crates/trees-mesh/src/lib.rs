@@ -133,37 +133,31 @@ fn wireframe(tree: &Tree) -> TreeMesh {
     mesh
 }
 
-/// The child that continues `node`'s axis after thickest-path re-topology:
-/// the thickest child, or on a tie the first (the original continuing axis).
-/// A stump continues the axis only if every child is a stump: it keeps the
-/// radius of the branch it was, so it can be the thickest, but the trunk
-/// should carry on into living wood rather than end at a stub.
-fn continuation(tree: &Tree, node: &TreeNode) -> Option<NodeId> {
-    let rank = |id: NodeId| {
-        let n = tree.node(id);
-        (!n.stump, n.radius)
-    };
-    node.children()
-        .reduce(|best, c| if rank(c) > rank(best) { c } else { best })
+/// The child that continues `node`'s axis: always the one in its main slot,
+/// whatever the radii. The apical continuation is fixed by the tree, not
+/// inferred from thickness, so a lateral never takes over: when the main
+/// child is shed the axis runs into its stump and ends there, and when it
+/// is pruned the axis ends at `node`. Either way the laterals keep the
+/// shape they had.
+fn continuation(node: &TreeNode) -> Option<NodeId> {
+    node.main.child()
 }
 
-/// Splits the tree into axes along the thickest path (design document,
-/// geometry pass 1): each axis is a chain of nodes from base to tip, and
-/// every node is on exactly one axis. Without this, a lateral that outgrows
-/// its parent would be meshed as a thin continuation plus a thick side
-/// branch, leaving cracks at the fork (Longay 2014 App. C.3).
+/// Splits the tree into axes (design document, geometry pass 1): each axis
+/// is a chain of nodes joined through their main slots, from base to tip,
+/// and every node is on exactly one axis. Every lateral starts a new axis.
 fn axes(tree: &Tree) -> Vec<Vec<NodeId>> {
     let mut axes = Vec::new();
     for (id, node) in tree.iter() {
         let continues_parent = node
             .parent
-            .is_some_and(|p| continuation(tree, tree.node(p)) == Some(id));
+            .is_some_and(|p| continuation(tree.node(p)) == Some(id));
         if continues_parent {
             continue;
         }
         let mut axis = vec![id];
         let mut cur = node;
-        while let Some(next) = continuation(tree, cur) {
+        while let Some(next) = continuation(cur) {
             axis.push(next);
             cur = tree.node(next);
         }
@@ -453,40 +447,61 @@ mod tests {
         }
     }
 
-    #[test]
-    fn thickest_child_continues_the_axis() {
-        let mut t = seedling();
-        let root = t.root();
-        let a = t
-            .grow(&OpenAir, root, SlotIndex::Main, Vec3::Y, 1.0)
-            .unwrap();
-        let b = t
-            .grow(&OpenAir, root, SlotIndex::Lateral(0), Vec3::X, 1.0)
-            .unwrap();
-        // Equal radii keep the original axis.
-        assert_eq!(axes(&t), vec![vec![root, a], vec![b]]);
-        t.node_mut(b).radius *= 2.0;
-        assert_eq!(axes(&t), vec![vec![root, b], vec![a]]);
+    /// The vertices of each axis's tube, in [`axes`] order: its rings of
+    /// `sides + 1` vertices, then the cap's hub and rim.
+    fn tube_vertices(tree: &Tree, mesh: &TreeMesh) -> Vec<Vec<[f32; 3]>> {
+        let mut start = 0;
+        axes(tree)
+            .into_iter()
+            .map(|axis| {
+                let first = tree.node(axis[0]);
+                let sides = side_count(first.radius, first.species.thickness.tip_radius, 2.0);
+                let count = (axis.len() + 1) * (sides as usize + 1) + 1 + sides as usize;
+                start += count;
+                mesh.positions[start - count..start].to_vec()
+            })
+            .collect()
     }
 
     #[test]
-    fn stumps_are_capped_and_never_continue_an_axis() {
+    fn a_thicker_lateral_still_branches_off() {
         let (mut t, [root, a, b, l1, l2]) = sapling();
-        // l1 is thicker than a, so it would otherwise continue the trunk.
-        t.node_mut(l1).radius = t.node(a).radius * 2.0;
-        let c = t.grow(&OpenAir, l1, SlotIndex::Main, Vec3::X, 0.5).unwrap();
-        assert_eq!(axes(&t)[0], vec![root, l1, c]);
-        t.shed(l1);
+        t.node_mut(l1).radius = t.node(root).radius;
+        t.node_mut(l2).radius = t.node(a).radius * 2.0;
         assert_eq!(axes(&t), vec![vec![root, a, b], vec![l1], vec![l2]]);
         let mesh = tube_mesh(&t);
-        let stump = t.node(l1);
+        let tubes = tube_vertices(&t, &mesh);
+        assert_eq!(
+            tubes.iter().map(Vec::len).sum::<usize>(),
+            mesh.positions.len()
+        );
+    }
+
+    #[test]
+    fn shedding_the_main_child_leaves_laterals_unchanged() {
+        let (mut t, [root, a, _, l1, _]) = sapling();
+        // Thicker than the main child, so a thickest-path rule would reroute.
+        t.node_mut(l1).radius = t.node(a).radius * 2.0;
+        let before = tube_vertices(&t, &tube_mesh(&t))[1].clone();
+        t.shed(a);
+        assert_eq!(axes(&t), vec![vec![root, a], vec![l1]]);
+        let mesh = tube_mesh(&t);
+        assert_eq!(tube_vertices(&t, &mesh)[1], before);
+        // The trunk runs into the stump and is capped there.
+        let stump = t.node(a);
         assert!((0..mesh.positions.len() as u32).any(|i| {
             (v(&mesh, i) - stump.position).length() < 1e-6
                 && (Vec3::from_array(mesh.normals[i as usize]) - stump.heading).length() < 1e-6
         }));
-        // With only stumps left, the thickest still continues the axis.
-        t.shed(a);
-        assert_eq!(axes(&t), vec![vec![root, l1], vec![a]]);
+    }
+
+    #[test]
+    fn pruning_the_main_child_ends_the_axis() {
+        let (mut t, [root, a, _, l1, _]) = sapling();
+        let before = tube_vertices(&t, &tube_mesh(&t))[1].clone();
+        t.prune(a);
+        assert_eq!(axes(&t), vec![vec![root], vec![l1]]);
+        assert_eq!(tube_vertices(&t, &tube_mesh(&t))[1], before);
     }
 
     #[test]
@@ -526,7 +541,7 @@ mod tests {
         let before = tube_mesh(&t);
         t.prune(a);
         let after = tube_mesh(&t);
-        assert_eq!(axes(&t), vec![vec![t.root(), l1]]);
+        assert_eq!(axes(&t), vec![vec![t.root()], vec![l1]]);
         assert!(after.positions.len() < before.positions.len());
         assert!(
             after

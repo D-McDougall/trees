@@ -479,6 +479,16 @@ mod tests {
     }
 
     #[test]
+    fn shedding_the_main_child_promotes_no_lateral() {
+        let (mut t, [a, b, l]) = forked();
+        t.shed(b);
+        let p = t.node(a);
+        assert_eq!(p.main, Slot::Child(b), "the stump stays the continuation");
+        assert_eq!(p.laterals[0], Slot::Child(l));
+        assert_eq!(t.node(l).order, p.order + 1);
+    }
+
+    #[test]
     fn stump_just_reaches_parent_bark() {
         let (mut t, [a, _, l]) = forked();
         let base = t.node(l).base();

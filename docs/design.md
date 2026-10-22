@@ -103,7 +103,7 @@ The known tension is that painting into an already shaded region often fails: lo
 
 Geometry is built in four passes from a render snapshot, each pass independent per branch so the whole build parallelizes, on the CPU or in GPU tessellation shaders.
 
-1. **Re-topologize along the thickest path.** Before meshing, the child that carries the most cross-section becomes the continuing axis at each fork. *Why:* when a lateral outgrows its parent, meshing the original axis produces cracks and kinks at the junction.
+1. **Split into axes.** Each axis follows a node's main (apical) child and every lateral starts a new axis. The apical continuation is fixed by the tree, never inferred from thickness: a lateral that outgrows its parent still branches off, and when the main child is shed or pruned the axis ends at its stump or at the fork instead of a lateral taking over. *Why:* re-routing an axis through a lateral would change that branch's shape the moment its neighbor is cut. The cost is visible cracks where a lateral is thicker than the continuing axis, which the junction meshes below are meant to fix.
 2. **Smooth the skeleton.** Each axis becomes a chain of quadratic rational Bézier curves through internode midpoints, smooth along every root-to-tip path. One weight controls how sharp the corners are.
 3. **Sweep generalized cylinders.** A cross-section ring is swept along each curve using a parallel-transport frame (no twisting). Because each segment is planar, the frame at any point has a closed form, so every vertex can be computed independently. Radius blends smoothly between internodes; ring resolution scales with radius, so trunks get many sides and twigs few. Texture coordinates use a cheap arc-length approximation.
 4. **Place foliage.** Leaves attach to branches below a width threshold, independently of buds. Each leaf is turned toward its preferred orientation by modelling the petiole as a rod that twists and bends. Leaves are instances of a few card or mesh templates, not unique geometry. Fruit and flowers use the same mechanism with a light-weighted probability.
@@ -119,7 +119,7 @@ Geometry is built in four passes from a render snapshot, each pass independent p
 | Marker assignment cost | Interactivity collapses around 5k internodes with brute force (Hart 2020) | Spatial index from day one; incremental updates per step |
 | Shedding fights the user | Painted branches vanish in shade | Light exponent above 1, normalized shoot length, protected branches |
 | Parameter sensitivity | λ near 0.5 swings tree form sharply | Species presets and narrow slider ranges |
-| Thick-fork junctions | Visible overlapping cylinders on hero trees | Thickest-path re-topology now; junction meshes later |
+| Thick-fork junctions | Visible overlapping cylinders on hero trees, worst where a lateral outgrows the continuing axis | Junction meshes |
 
 **Scope decisions**
 
