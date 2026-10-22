@@ -1,5 +1,5 @@
 //! Minimal Bevy viewer: grows a small test tree with a fixed rule (there is
-//! no growth simulator yet) and draws its wireframe mesh. Drag to orbit the
+//! no growth simulator yet) and draws its tube mesh. Drag to orbit the
 //! camera, right-drag to pan and scroll to zoom.
 //!
 //! Native: `cargo run -p trees-viewer`
@@ -12,7 +12,7 @@ use bevy::camera_controller::pan_orbit_camera::prelude::PanOrbitCamera;
 use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::prelude::*;
 use trees_core::{Habitat, Tree, TreeSpecies};
-use trees_mesh::{MeshOptions, Topology, TreeMesh, build_mesh};
+use trees_mesh::{MeshOptions, MeshStyle, Topology, TreeMesh, TubeOptions, build_mesh};
 
 mod camera;
 
@@ -63,14 +63,13 @@ fn setup(
             .with_translation(Vec3::Y * scene.ground_height),
     ));
     // Test tree
-    let tree_mesh = build_mesh(&test_tree(&scene), &MeshOptions::default());
+    let options = MeshOptions {
+        style: MeshStyle::Tubes(TubeOptions::default()),
+    };
+    let tree_mesh = build_mesh(&test_tree(&scene), &options);
     commands.spawn((
         Mesh3d(meshes.add(to_bevy_mesh(tree_mesh))),
-        MeshMaterial3d(materials.add(StandardMaterial {
-            base_color: Color::srgb(0.85, 0.65, 0.45),
-            unlit: true,
-            ..default()
-        })),
+        MeshMaterial3d(materials.add(Color::srgb(0.45, 0.32, 0.22))),
     ));
     commands.spawn((
         PointLight {
@@ -124,9 +123,17 @@ fn test_tree(habitat: &impl Habitat) -> Tree {
 fn to_bevy_mesh(mesh: TreeMesh) -> Mesh {
     let topology = match mesh.topology {
         Topology::LineList => PrimitiveTopology::LineList,
+        Topology::TriangleList => PrimitiveTopology::TriangleList,
         _ => unimplemented!("viewer does not draw {:?} yet", mesh.topology),
     };
-    Mesh::new(topology, RenderAssetUsages::default())
+    let mut bevy_mesh = Mesh::new(topology, RenderAssetUsages::default())
         .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, mesh.positions)
-        .with_inserted_indices(Indices::U32(mesh.indices))
+        .with_inserted_indices(Indices::U32(mesh.indices));
+    if !mesh.normals.is_empty() {
+        bevy_mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, mesh.normals);
+    }
+    if !mesh.uvs.is_empty() {
+        bevy_mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, mesh.uvs);
+    }
+    bevy_mesh
 }
