@@ -29,6 +29,7 @@ mod camera;
 mod editor;
 mod leaf_debug;
 mod pick;
+mod units;
 
 fn main() {
     App::new()

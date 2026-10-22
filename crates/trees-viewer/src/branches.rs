@@ -23,6 +23,7 @@ use trees_mesh::base_ring_radius;
 
 use crate::editor::{PanelWidth, pointer_over_panel};
 use crate::pick::pick;
+use crate::units::{LengthUnit, radius_label};
 
 /// A branch, named by the slots leading to it from the root.
 pub type BranchPath = Vec<SlotIndex>;
@@ -244,7 +245,7 @@ fn menu_ui(ui: &mut egui::Ui, tree: &Tree, grown: &Tree, path: &[SlotIndex], pin
         .expect("menu closes when its branch goes");
     let node = tree.node(id);
     ui.strong(format!("Branch #{} ({})", id.index(), path_label(path)));
-    ui.label(format!("Radius {:.4}", node.radius));
+    ui.label(format!("Radius {}", radius_label(node.radius)));
     if node.stump {
         ui.weak("A stump keeps the radius it had when it was shed.");
     }
@@ -255,7 +256,9 @@ fn menu_ui(ui: &mut egui::Ui, tree: &Tree, grown: &Tree, path: &[SlotIndex], pin
             .show(ui, |ui| {
                 let tip = tree.species().thickness.tip_radius;
                 let max = (grown.node(grown.root()).radius * MAX_WIDTH_FACTOR).max(tip * 2.0);
-                let mut r = pin.unwrap_or(node.radius);
+                let unit = LengthUnit::Inches;
+                let mut r = unit.from_world(pin.unwrap_or(node.radius));
+                let (tip, max) = (unit.from_world(tip), unit.from_world(max));
                 let speed = r * 0.01;
                 ui.horizontal(|ui| {
                     let slider = ui.add(
@@ -267,10 +270,11 @@ fn menu_ui(ui: &mut egui::Ui, tree: &Tree, grown: &Tree, path: &[SlotIndex], pin
                         DragValue::new(&mut r)
                             .range(tip..=max)
                             .speed(speed)
-                            .max_decimals(4),
+                            .max_decimals(4)
+                            .suffix(unit.suffix()),
                     );
                     if slider.changed() || typed.changed() {
-                        pins.set(path, r);
+                        pins.set(path, unit.to_world(r));
                     }
                 });
                 let mut pinned = pin.is_some();
@@ -286,7 +290,7 @@ fn menu_ui(ui: &mut egui::Ui, tree: &Tree, grown: &Tree, path: &[SlotIndex], pin
             if node.radius > pin {
                 ui.colored_label(
                     WARNING_COLOR,
-                    format!("Too thin to hold: widened to {:.4}", node.radius),
+                    format!("Too thin to hold: widened to {}", radius_label(node.radius)),
                 );
             } else if let Some(n) = tree.pin_exponent(id) {
                 ui.label(format!("Pipe exponent below: n = {n:.2}"));

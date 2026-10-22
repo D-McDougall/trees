@@ -19,6 +19,7 @@ use trees_core::{BranchingPattern, SlotIndex, Tree, TreeSpecies, VigorModel};
 
 use crate::branches::{BranchMenu, BranchPath, ShownTree, WidthPins, path_label};
 use crate::leaf_debug::LeafDebug;
+use crate::units::{LengthUnit, radius_label};
 
 /// What the tree is grown from. Changing it triggers a regrow.
 #[derive(Resource, Clone, Default, PartialEq)]
@@ -87,7 +88,6 @@ fn panel(
             egui::ScrollArea::vertical().show(ui, |ui| {
                 tree_ui(ui, &mut edited);
                 ui.checkbox(&mut debug_enabled, "Debug leaf disks");
-                ui.weak("4-inch default; scales from blade base (1 unit = 1 m).");
                 if let Some(tree) = tree.as_ref() {
                     ui.label(format!("{} leaf placements", tree.0.leaves().len()));
                 }
@@ -190,18 +190,21 @@ fn pins_ui(
                             if shown > *r {
                                 ui.colored_label(
                                     egui::Color32::from_rgb(230, 160, 40),
-                                    format!("{r:.4}"),
+                                    radius_label(*r),
                                 )
-                                .on_hover_text(format!("Too thin to hold: widened to {shown:.4}"));
+                                .on_hover_text(format!(
+                                    "Too thin to hold: widened to {}",
+                                    radius_label(shown)
+                                ));
                             } else {
-                                ui.label(format!("{r:.4}"));
+                                ui.label(radius_label(*r));
                             }
                             ui.label(format!("{n:.2}"));
                         }
                         None => {
                             ui.weak(path_label(path))
                                 .on_hover_text("This branch is not in the current tree.");
-                            ui.weak(format!("{r:.4}"));
+                            ui.weak(radius_label(*r));
                             ui.weak("–");
                         }
                     }
@@ -225,7 +228,13 @@ fn species_ui(ui: &mut egui::Ui, s: &mut TreeSpecies) {
         angle(ui, "Divergence φ", &mut a.divergence_angle, 0.0..=360.0);
         angle(ui, "Branching ψ", &mut a.branching_angle, 0.0..=180.0);
         angle(ui, "Deflection δ", &mut a.deflection_angle, 0.0..=180.0);
-        number(ui, "Internode length", &mut a.internode_length, 0.01..=10.0);
+        length(
+            ui,
+            "Internode length",
+            &mut a.internode_length,
+            0.01..=10.0,
+            LengthUnit::Feet,
+        );
     });
 
     section(ui, "Foliage", |ui| {
@@ -234,13 +243,43 @@ fn species_ui(ui: &mut egui::Ui, s: &mut TreeSpecies) {
         ui.checkbox(&mut f.enabled, "");
         ui.end_row();
         arrangement(ui, "Arrangement", "foliage arrangement", &mut f.arrangement);
-        number(ui, "Leaf spacing", &mut f.spacing, 0.01..=10.0);
-        number(ui, "Maximum branch radius", &mut f.max_radius, 0.0..=1.0);
+        length(
+            ui,
+            "Leaf spacing",
+            &mut f.spacing,
+            0.01..=10.0,
+            LengthUnit::Inches,
+        );
+        length(
+            ui,
+            "Maximum branch radius",
+            &mut f.max_radius,
+            0.0..=1.0,
+            LengthUnit::Inches,
+        );
         angle(ui, "Leaf divergence", &mut f.divergence_angle, 0.0..=360.0);
         angle(ui, "Attachment angle", &mut f.attachment_angle, 0.0..=180.0);
-        number(ui, "Petiole length", &mut f.petiole_length, 0.0..=2.0);
-        number(ui, "Blade length", &mut f.blade_length, 0.0..=2.0);
-        number(ui, "Blade width", &mut f.blade_width, 0.0..=2.0);
+        length(
+            ui,
+            "Petiole length",
+            &mut f.petiole_length,
+            0.0..=2.0,
+            LengthUnit::Inches,
+        );
+        length(
+            ui,
+            "Blade length",
+            &mut f.blade_length,
+            0.0..=2.0,
+            LengthUnit::Inches,
+        );
+        length(
+            ui,
+            "Blade width",
+            &mut f.blade_width,
+            0.0..=2.0,
+            LengthUnit::Inches,
+        );
     });
 
     section(ui, "Vigor", |ui| {
@@ -322,11 +361,12 @@ fn species_ui(ui: &mut egui::Ui, s: &mut TreeSpecies) {
     section(ui, "Space colonization", |ui| {
         ui.disable();
         let c = &mut s.space;
-        number(
+        length(
             ui,
             "Occupancy radius ρ",
             &mut c.occupancy_radius,
             0.01..=c.perception_distance - 0.01,
+            LengthUnit::Feet,
         );
         angle(
             ui,
@@ -334,11 +374,12 @@ fn species_ui(ui: &mut egui::Ui, s: &mut TreeSpecies) {
             &mut c.perception_angle,
             1.0..=179.0,
         );
-        number(
+        length(
             ui,
             "Perception distance r",
             &mut c.perception_distance,
             c.occupancy_radius + 0.01..=50.0,
+            LengthUnit::Feet,
         );
         number(
             ui,
@@ -373,7 +414,13 @@ fn species_ui(ui: &mut egui::Ui, s: &mut TreeSpecies) {
 
     section(ui, "Thickness", |ui| {
         let th = &mut s.thickness;
-        number(ui, "Tip radius", &mut th.tip_radius, 0.001..=1.0);
+        length(
+            ui,
+            "Tip radius",
+            &mut th.tip_radius,
+            0.001..=1.0,
+            LengthUnit::Inches,
+        );
         number(ui, "Pipe exponent n", &mut th.pipe_exponent, 2.0..=3.0);
     });
 }
@@ -429,6 +476,30 @@ fn angle(ui: &mut egui::Ui, label: &str, radians: &mut f32, degrees: RangeInclus
     // Only write back real edits, so the degree round trip never nudges a value.
     if response.changed() {
         *radians = to_radians(value).clamp(lo, hi);
+    }
+    ui.end_row();
+}
+
+/// Convert only at the UI boundary, and preserve the stored value on redraw.
+fn length(
+    ui: &mut egui::Ui,
+    label: &str,
+    value: &mut f32,
+    range: RangeInclusive<f32>,
+    unit: LengthUnit,
+) {
+    ui.label(label);
+    let mut shown = unit.from_world(*value);
+    let shown_range = unit.from_world(*range.start())..=unit.from_world(*range.end());
+    let speed = (shown_range.end() - shown_range.start()) / 200.0;
+    let response = ui.add(
+        DragValue::new(&mut shown)
+            .range(shown_range)
+            .speed(speed)
+            .suffix(unit.suffix()),
+    );
+    if response.changed() {
+        *value = unit.to_world(shown).clamp(*range.start(), *range.end());
     }
     ui.end_row();
 }
