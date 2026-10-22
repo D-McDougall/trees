@@ -18,10 +18,10 @@ use bevy::window::PrimaryWindow;
 use bevy_egui::egui::{self, DragValue};
 use bevy_egui::input::EguiWantsInput;
 use bevy_egui::{EguiContexts, EguiPrimaryContextPass};
-use trees_core::{NodeId, SlotIndex, Tree};
+use trees_core::{BudFate, NodeId, SlotIndex, Tree};
 use trees_mesh::base_ring_radius;
 
-use crate::editor::{PanelWidth, pointer_over_panel};
+use crate::editor::{PanelWidth, pointer_over_panel, to_feet, to_metres};
 use crate::pick::pick;
 
 /// A branch, named by the slots leading to it from the root.
@@ -244,7 +244,7 @@ fn menu_ui(ui: &mut egui::Ui, tree: &Tree, grown: &Tree, path: &[SlotIndex], pin
         .expect("menu closes when its branch goes");
     let node = tree.node(id);
     ui.strong(format!("Branch #{} ({})", id.index(), path_label(path)));
-    ui.label(format!("Radius {:.4}", node.radius));
+    ui.label(format!("Radius {:.4} ft", to_feet(node.radius)));
     if node.stump {
         ui.weak("A stump keeps the radius it had when it was shed.");
     }
@@ -253,9 +253,10 @@ fn menu_ui(ui: &mut egui::Ui, tree: &Tree, grown: &Tree, path: &[SlotIndex], pin
         egui::CollapsingHeader::new("Adjust width")
             .id_salt("adjust width")
             .show(ui, |ui| {
-                let tip = tree.species().thickness.tip_radius;
-                let max = (grown.node(grown.root()).radius * MAX_WIDTH_FACTOR).max(tip * 2.0);
-                let mut r = pin.unwrap_or(node.radius);
+                let tip = to_feet(tree.species().thickness.tip_radius);
+                let max =
+                    (to_feet(grown.node(grown.root()).radius) * MAX_WIDTH_FACTOR).max(tip * 2.0);
+                let mut r = to_feet(pin.unwrap_or(node.radius));
                 let speed = r * 0.01;
                 ui.horizontal(|ui| {
                     let slider = ui.add(
@@ -267,10 +268,11 @@ fn menu_ui(ui: &mut egui::Ui, tree: &Tree, grown: &Tree, path: &[SlotIndex], pin
                         DragValue::new(&mut r)
                             .range(tip..=max)
                             .speed(speed)
-                            .max_decimals(4),
+                            .max_decimals(4)
+                            .suffix(" ft"),
                     );
                     if slider.changed() || typed.changed() {
-                        pins.set(path, r);
+                        pins.set(path, to_metres(r).clamp(to_metres(tip), to_metres(max)));
                     }
                 });
                 let mut pinned = pin.is_some();
@@ -286,7 +288,10 @@ fn menu_ui(ui: &mut egui::Ui, tree: &Tree, grown: &Tree, path: &[SlotIndex], pin
             if node.radius > pin {
                 ui.colored_label(
                     WARNING_COLOR,
-                    format!("Too thin to hold: widened to {:.4}", node.radius),
+                    format!(
+                        "Too thin to hold: widened to {:.4} ft",
+                        to_feet(node.radius)
+                    ),
                 );
             } else if let Some(n) = tree.pin_exponent(id) {
                 ui.label(format!("Pipe exponent below: n = {n:.2}"));
@@ -323,6 +328,19 @@ fn draw_markers(
     }
     if let Some(id) = menu.target.as_deref().and_then(|p| tree.node_at(p)) {
         let node = tree.node(id);
+        if !node.stump {
+            for (_, bud) in node.buds().filter(|(_, bud)| bud.fate != BudFate::Aborted) {
+                if let Some(axis) = bud.direction.try_normalize() {
+                    perception_cone(
+                        &mut gizmos,
+                        node.position,
+                        axis,
+                        node.species.space.perception_distance,
+                        node.species.space.perception_angle,
+                    );
+                }
+            }
+        }
         let [base, tip] = ring_radii(tree, id).map(|r| r * 1.08);
         ring(&mut gizmos, node.base(), node.heading, base, SELECTED_COLOR);
         ring(
@@ -342,6 +360,27 @@ fn draw_markers(
                 node.base() + side * base,
                 node.position + side * tip,
                 SELECTED_COLOR,
+            );
+        }
+    }
+}
+
+/// Sensing uses a distance-limited cone: its far boundary is a spherical
+/// cap, rather than a flat disk. Draw its rim, sides and four cap arcs.
+fn perception_cone(gizmos: &mut Gizmos, origin: Vec3, axis: Vec3, reach: f32, angle: f32) {
+    let color = Color::srgb(0.35, 0.85, 1.0);
+    let rotation = Quat::from_rotation_arc(Vec3::Z, axis);
+    let rim_center = origin + axis * (reach * angle.cos());
+    ring(gizmos, rim_center, axis, reach * angle.sin(), color);
+    for side in [Vec3::X, Vec3::Y, -Vec3::X, -Vec3::Y] {
+        let point =
+            |theta: f32| origin + rotation * (Vec3::Z * theta.cos() + side * theta.sin()) * reach;
+        gizmos.line(origin, point(angle), color);
+        for step in 0..24 {
+            gizmos.line(
+                point(angle * step as f32 / 24.0),
+                point(angle * (step + 1) as f32 / 24.0),
+                color,
             );
         }
     }

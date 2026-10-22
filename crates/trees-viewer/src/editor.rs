@@ -87,7 +87,7 @@ fn panel(
             egui::ScrollArea::vertical().show(ui, |ui| {
                 tree_ui(ui, &mut edited);
                 ui.checkbox(&mut debug_enabled, "Debug leaf disks");
-                ui.weak("4-inch default; scales from blade base (1 unit = 1 m).");
+                ui.weak("0.333 ft default; scales from blade base.");
                 if let Some(tree) = tree.as_ref() {
                     ui.label(format!("{} leaf placements", tree.0.leaves().len()));
                 }
@@ -173,10 +173,11 @@ fn pins_ui(
             let mut unpin = None;
             egui::Grid::new("width pins").num_columns(4).show(ui, |ui| {
                 ui.strong("Branch");
-                ui.strong("Radius");
+                ui.strong("Radius (ft)");
                 ui.strong("n");
                 ui.end_row();
                 for (i, (path, r)) in pins.0.iter().enumerate() {
+                    let feet = to_feet(*r);
                     let id = tree.node_at(path);
                     match id.and_then(|id| Some((id, tree.pin_exponent(id)?))) {
                         Some((id, n)) => {
@@ -190,18 +191,21 @@ fn pins_ui(
                             if shown > *r {
                                 ui.colored_label(
                                     egui::Color32::from_rgb(230, 160, 40),
-                                    format!("{r:.4}"),
+                                    format!("{feet:.4}"),
                                 )
-                                .on_hover_text(format!("Too thin to hold: widened to {shown:.4}"));
+                                .on_hover_text(format!(
+                                    "Too thin to hold: widened to {:.4} ft",
+                                    to_feet(shown)
+                                ));
                             } else {
-                                ui.label(format!("{r:.4}"));
+                                ui.label(format!("{feet:.4}"));
                             }
                             ui.label(format!("{n:.2}"));
                         }
                         None => {
                             ui.weak(path_label(path))
                                 .on_hover_text("This branch is not in the current tree.");
-                            ui.weak(format!("{r:.4}"));
+                            ui.weak(format!("{feet:.4}"));
                             ui.weak("–");
                         }
                     }
@@ -225,7 +229,7 @@ fn species_ui(ui: &mut egui::Ui, s: &mut TreeSpecies) {
         angle(ui, "Divergence φ", &mut a.divergence_angle, 0.0..=360.0);
         angle(ui, "Branching ψ", &mut a.branching_angle, 0.0..=180.0);
         angle(ui, "Deflection δ", &mut a.deflection_angle, 0.0..=180.0);
-        number(ui, "Internode length", &mut a.internode_length, 0.01..=10.0);
+        length(ui, "Internode length", &mut a.internode_length, 0.01..=10.0);
     });
 
     section(ui, "Foliage", |ui| {
@@ -234,13 +238,13 @@ fn species_ui(ui: &mut egui::Ui, s: &mut TreeSpecies) {
         ui.checkbox(&mut f.enabled, "");
         ui.end_row();
         arrangement(ui, "Arrangement", "foliage arrangement", &mut f.arrangement);
-        number(ui, "Leaf spacing", &mut f.spacing, 0.01..=10.0);
-        number(ui, "Maximum branch radius", &mut f.max_radius, 0.0..=1.0);
+        length(ui, "Leaf spacing", &mut f.spacing, 0.01..=10.0);
+        length(ui, "Maximum branch radius", &mut f.max_radius, 0.0..=1.0);
         angle(ui, "Leaf divergence", &mut f.divergence_angle, 0.0..=360.0);
         angle(ui, "Attachment angle", &mut f.attachment_angle, 0.0..=180.0);
-        number(ui, "Petiole length", &mut f.petiole_length, 0.0..=2.0);
-        number(ui, "Blade length", &mut f.blade_length, 0.0..=2.0);
-        number(ui, "Blade width", &mut f.blade_width, 0.0..=2.0);
+        length(ui, "Petiole length", &mut f.petiole_length, 0.0..=2.0);
+        length(ui, "Blade length", &mut f.blade_length, 0.0..=2.0);
+        length(ui, "Blade width", &mut f.blade_width, 0.0..=2.0);
     });
 
     section(ui, "Vigor", |ui| {
@@ -291,7 +295,12 @@ fn species_ui(ui: &mut egui::Ui, s: &mut TreeSpecies) {
             &mut v.activation_threshold,
             0.0..=10.0,
         );
-        count(ui, "Max shoot length", &mut v.max_shoot_length, 1..=20);
+        count(
+            ui,
+            "Max shoot length (internodes)",
+            &mut v.max_shoot_length,
+            1..=20,
+        );
     });
 
     section(ui, "Tropism", |ui| {
@@ -335,7 +344,7 @@ fn species_ui(ui: &mut egui::Ui, s: &mut TreeSpecies) {
     section(ui, "Space colonization", |ui| {
         ui.disable();
         let c = &mut s.space;
-        number(
+        length(
             ui,
             "Occupancy radius ρ",
             &mut c.occupancy_radius,
@@ -347,7 +356,7 @@ fn species_ui(ui: &mut egui::Ui, s: &mut TreeSpecies) {
             &mut c.perception_angle,
             1.0..=179.0,
         );
-        number(
+        length(
             ui,
             "Perception distance r",
             &mut c.perception_distance,
@@ -386,7 +395,7 @@ fn species_ui(ui: &mut egui::Ui, s: &mut TreeSpecies) {
 
     section(ui, "Thickness", |ui| {
         let th = &mut s.thickness;
-        number(ui, "Tip radius", &mut th.tip_radius, 0.001..=1.0);
+        length(ui, "Tip radius", &mut th.tip_radius, 0.001..=1.0);
         number(ui, "Pipe exponent n", &mut th.pipe_exponent, 2.0..=3.0);
     });
 }
@@ -417,6 +426,36 @@ fn number(ui: &mut egui::Ui, label: &str, value: &mut f32, range: RangeInclusive
     ui.label(label);
     let speed = (range.end() - range.start()) / 200.0;
     ui.add(DragValue::new(value).range(range).speed(speed));
+    ui.end_row();
+}
+
+/// Internal lengths remain metres; only UI values use feet.
+pub const METRES_PER_FOOT: f32 = 0.3048;
+
+pub fn to_feet(metres: f32) -> f32 {
+    metres / METRES_PER_FOOT
+}
+
+pub fn to_metres(feet: f32) -> f32 {
+    feet * METRES_PER_FOOT
+}
+
+fn length(ui: &mut egui::Ui, label: &str, metres: &mut f32, range: RangeInclusive<f32>) {
+    ui.label(label);
+    let mut feet = to_feet(*metres);
+    let feet_range = to_feet(*range.start())..=to_feet(*range.end());
+    let speed = (feet_range.end() - feet_range.start()) / 200.0;
+    if ui
+        .add(
+            DragValue::new(&mut feet)
+                .range(feet_range)
+                .speed(speed)
+                .suffix(" ft"),
+        )
+        .changed()
+    {
+        *metres = to_metres(feet).clamp(*range.start(), *range.end());
+    }
     ui.end_row();
 }
 
