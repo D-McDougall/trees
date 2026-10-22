@@ -1,7 +1,8 @@
 //! Temporary visualization of stored leaf placements, without leaf textures.
 //!
 //! One world unit is interpreted as one metre for this debug marker only.
-//! Each disk has a four-inch diameter and is centered on the initial blade.
+//! Disks default to four inches across and scale with blade width/length,
+//! keeping the bottom-center blade base fixed at the petiole endpoint.
 //! All disks share one batched mesh and a two-sided, unlit material.
 
 use bevy::asset::RenderAssetUsages;
@@ -12,7 +13,6 @@ use trees_core::Tree;
 
 use crate::branches::ShownTree;
 
-const DISK_RADIUS: f32 = 4.0 * 0.0254 / 2.0;
 const DISK_SIDES: usize = 16;
 
 /// A viewer-only switch; toggling it does not change species or regrow trees.
@@ -68,19 +68,28 @@ pub fn show_leaf_debug(
 fn disk_mesh(tree: &Tree) -> Mesh {
     let mut positions = Vec::with_capacity(tree.leaves().len() * (DISK_SIDES + 1));
     let mut normals = Vec::with_capacity(positions.capacity());
+    let mut uvs = Vec::with_capacity(positions.capacity());
     let mut indices = Vec::with_capacity(tree.leaves().len() * DISK_SIDES * 3);
     let f = &tree.species().foliage;
+    // Shared unit-circle template: no need to repeat trigonometry per leaf.
+    let perimeter: [(f32, f32); DISK_SIDES] =
+        std::array::from_fn(|i| (std::f32::consts::TAU * i as f32 / DISK_SIDES as f32).sin_cos());
     for leaf in tree.leaves() {
         let center = leaf.blade_base(f.petiole_length) + leaf.heading * (f.blade_length * 0.5);
         let base = u32::try_from(positions.len()).expect("too many debug vertices");
         positions.push(center.to_array());
         normals.push(leaf.normal.to_array());
-        for i in 0..DISK_SIDES {
-            let angle = std::f32::consts::TAU * i as f32 / DISK_SIDES as f32;
-            let (sin, cos) = angle.sin_cos();
-            let position = center + DISK_RADIUS * (cos * leaf.heading + sin * leaf.left);
+        uvs.push([0.5, 0.5]);
+        for (i, &(sin, cos)) in perimeter.iter().enumerate() {
+            // Scale around the bottom-center pivot, not around the disk center.
+            let position = center
+                + cos * (f.blade_length * 0.5) * leaf.heading
+                + sin * (f.blade_width * 0.5) * leaf.left;
             positions.push(position.to_array());
             normals.push(leaf.normal.to_array());
+            // Image top is v=0; bottom center (u=0.5, v=1) is the blade base.
+            // Positive L is image-left, so u decreases along it.
+            uvs.push([0.5 - 0.5 * sin, 0.5 - 0.5 * cos]);
             indices.extend([
                 base,
                 base + 1 + i as u32,
@@ -94,6 +103,7 @@ fn disk_mesh(tree: &Tree) -> Mesh {
     )
     .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
     .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
+    .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uvs)
     .with_inserted_indices(Indices::U32(indices))
 }
 
@@ -137,6 +147,49 @@ mod tests {
             let [a, b, c] = triangle.map(|i| Vec3::from_array(vertices[i as usize]));
             let normal = tree.leaves()[triangle[0] as usize / (DISK_SIDES + 1)].normal;
             assert!((b - a).cross(c - a).dot(normal) > 0.0);
+        }
+    }
+
+    #[test]
+    fn independent_scaling_keeps_bottom_center_rooted_to_petiole_endpoint() {
+        let default = TreeSpecies::default();
+        assert!((default.foliage.blade_length - 0.1016).abs() < 1e-7);
+        assert!((default.foliage.blade_width - 0.1016).abs() < 1e-7);
+        let original = Tree::new(Arc::new(default.clone()), 42, Vec3::ZERO).unwrap();
+        for (length_scale, width_scale) in [(2.0, 0.5), (0.5, 3.0), (1.0, 1.0)] {
+            let mut species = default.clone();
+            species.foliage.blade_length *= length_scale;
+            species.foliage.blade_width *= width_scale;
+            let tree = Tree::new(Arc::new(species), 42, Vec3::ZERO).unwrap();
+            assert_eq!(tree.leaves(), original.leaves());
+            let mesh = disk_mesh(&tree);
+            let Some(VertexAttributeValues::Float32x3(vertices)) =
+                mesh.attribute(Mesh::ATTRIBUTE_POSITION)
+            else {
+                panic!("missing positions")
+            };
+            let Some(VertexAttributeValues::Float32x2(uvs)) = mesh.attribute(Mesh::ATTRIBUTE_UV_0)
+            else {
+                panic!("missing UVs")
+            };
+            let f = &tree.species().foliage;
+            for (index, leaf) in tree.leaves().iter().enumerate() {
+                let start = index * (DISK_SIDES + 1);
+                let disk = &vertices[start..start + DISK_SIDES + 1];
+                let base = leaf.blade_base(f.petiole_length);
+                let bottom = Vec3::from_array(disk[1 + DISK_SIDES / 2]);
+                assert!(bottom.distance(base) < 1e-6);
+                let tip = Vec3::from_array(disk[1]);
+                assert!(tip.distance(base + leaf.heading * f.blade_length) < 1e-6);
+                let left = Vec3::from_array(disk[1 + DISK_SIDES / 4]);
+                let right = Vec3::from_array(disk[1 + 3 * DISK_SIDES / 4]);
+                assert!((left.distance(right) - f.blade_width).abs() < 1e-6);
+                assert!(uvs[start + 1 + DISK_SIDES / 4][0].abs() < 1e-6);
+                assert!((uvs[start + 1 + 3 * DISK_SIDES / 4][0] - 1.0).abs() < 1e-6);
+                let bottom_uv = uvs[start + 1 + DISK_SIDES / 2];
+                assert!((bottom_uv[0] - 0.5).abs() < 1e-6);
+                assert!((bottom_uv[1] - 1.0).abs() < 1e-6);
+            }
         }
     }
 

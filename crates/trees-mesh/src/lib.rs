@@ -150,11 +150,7 @@ fn continuation(node: &TreeNode) -> Option<NodeId> {
 /// tube is straight between the two, so a tool outlining one internode can
 /// use these to enclose exactly what is drawn.
 pub fn base_ring_radius(tree: &Tree, id: NodeId) -> f32 {
-    let node = tree.node(id);
-    match node.parent.map(|p| tree.node(p)) {
-        Some(parent) if continuation(parent) == Some(id) => parent.radius,
-        _ => node.radius,
-    }
+    tree.base_radius(id)
 }
 
 /// Splits the tree into axes (design document, geometry pass 1): each axis

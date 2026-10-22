@@ -31,7 +31,8 @@ project conventions, not claims of exact equations from the thesis:
    a real, nonzero internode, and may carry leaves.
 4. Radius is linearly interpolated at each station. A main continuation uses
    its parent's radius at its base and its own radius at its tip; an axis start
-   uses its own radius at both ends. This matches the existing tube mesh.
+   uses its own radius at both ends. Foliage and the tube mesh share
+   `Tree::base_radius` so they cannot drift to different taper rules.
    A leaf exists only if this local **radius is strictly less than**
    `foliage.max_radius`. Thus the cutoff diameter is twice that value.
 5. Attachments are offset radially from the centerline onto the bark surface.
@@ -69,8 +70,8 @@ botanical measurements.
 | `arrangement` | Alternate | One leaf or an opposite pair, independent of branch buds |
 | `divergence_angle` | golden angle | Finite radians per station; may be negative |
 | `attachment_angle` | 60 degrees | Finite radians in `[0, π]` |
-| `blade_length` | 0.3 | Non-negative finite distance from blade base to tip |
-| `blade_width` | 0.15 | Non-negative finite distance across blade |
+| `blade_length` | 0.1016 (4 inches) | Non-negative finite distance from blade base to tip |
+| `blade_width` | 0.1016 (4 inches) | Non-negative finite distance across blade |
 | `petiole_length` | 0.08 | Non-negative finite straight initial length |
 | `appearance` | `generic-broadleaf` | Opaque, engine-neutral key resolved by the viewer later |
 
@@ -98,6 +99,9 @@ stored leaf collection. Failed growth and refused edits do not change it. A
 radius pin takes effect on foliage when `update_radii` applies it, matching the
 existing pin lifecycle. Growth/pruning refresh against the currently stored
 radii; callers must still run `update_radii` to solve new branch thicknesses.
+`grow` rejects zero/non-finite or unnormalizable directions, negative/non-finite
+lengths and non-finite resulting positions before consuming a bud. Zero length
+remains valid and emits no attachments.
 `advance_step` only changes the season counter and does not age/drop leaves.
 
 The existing public mutable-node accessors bypass these automatic passes. After
@@ -128,15 +132,19 @@ species sections hides/shows the disks without changing species or regrowing the
 tree. A counter shows the number of stored leaf placements. Disks refresh from
 `ShownTree`, so radius pins and species/seed changes are reflected automatically.
 They share one batched mesh and an unlit, two-sided green material, and do not
-cast shadows. Hiding the disks retains their mesh; a changed tree replaces it.
+cast shadows. One unit-circle perimeter is reused for every disk in a rebuild.
+Hiding the disks retains their mesh; a changed tree replaces it.
 
-Each disk is 0.1016 world units across (four inches, interpreting one unit as one
-metre for this marker). Its center is the initial petiole endpoint plus half the
-blade length along the leaf heading; its plane follows the stored blade normal.
-This marks the center of the eventual blade rather than its bark attachment.
-Disk size stays fixed when blade dimensions change. Blade length moves its
-center; blade width only suppresses placements when zero, until real leaf
-geometry is added. These disks are temporary debugging aids, not final foliage.
+Each disk defaults to 0.1016 world units across (four inches, interpreting one
+unit as one metre). Width and length independently scale the debug disk into an
+ellipse, matching the blade dimensions. Its bottom-center anchor stays at the
+petiole endpoint, and its tip extends along the leaf heading by `blade_length`.
+The center moves by half the length; the anchor never moves when either blade
+dimension changes. The plane follows the stored normal. UV bottom center
+`(0.5, 1)` maps to that same anchor, ready for the prepared PNG convention.
+Positive blade-left maps to image-left (`u=0`), avoiding a mirrored texture.
+Zero width or length suppresses placements. These shapes are temporary debugging
+aids, not final textured foliage.
 
 The **Foliage** section edits leaves enabled, alternate/opposite arrangement,
 spacing, maximum branch radius, leaf divergence, attachment angle, petiole length,
@@ -148,5 +156,14 @@ pins; foliage-only edits reproduce the same branch skeleton. Debug visibility
 alone never triggers regrowth. Like the other existing viewer settings, these
 controls are session-local until the persistence unit is implemented.
 
-Viewer tests check disk diameter, centers, planes and triangle winding, debug
-visibility and mesh replacement, and that foliage edits preserve branch geometry.
+Viewer tests check default diameter, independent axis scaling, bottom-center anchoring,
+UV orientation, centers, planes and triangle winding, debug visibility and mesh replacement, and that foliage edits preserve branch geometry.
+
+For a quick smoke check, run `cargo test --workspace`,
+`cargo clippy --workspace --all-targets -- -D warnings`, and
+`cargo fmt --all --check`. Native inspection: run `cargo run -p trees-viewer`,
+verify the green placements, toggle Debug leaf disks, then vary leaf width and
+length independently. The petiole endpoint should remain the bottom-center
+anchor, and the branch skeleton should stay the same. Width pins should update
+which tapered regions qualify for leaves. The headless viewer tests cover toggle
+and mesh-update behavior without requiring a display.

@@ -208,8 +208,8 @@ impl Default for Foliage {
             arrangement: BranchingPattern::Alternate,
             divergence_angle: GOLDEN_ANGLE,
             attachment_angle: 60f32.to_radians(),
-            blade_length: 0.3,
-            blade_width: 0.15,
+            blade_length: 4.0 * 0.0254,
+            blade_width: 4.0 * 0.0254,
             petiole_length: 0.08,
             appearance: "generic-broadleaf".into(),
         }

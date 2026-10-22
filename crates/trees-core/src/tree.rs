@@ -182,6 +182,18 @@ impl Tree {
         })
     }
 
+    /// Radius at the base of a straight tapered internode. A main child shares
+    /// its parent's tip ring; a root or lateral axis starts at its own radius.
+    /// Shared by branch geometry and foliage so attachments stay on the bark.
+    /// Panics for a missing node, like [`Tree::node`].
+    pub fn base_radius(&self, id: NodeId) -> f32 {
+        let node = self.node(id);
+        match node.parent.map(|p| self.node(p)) {
+            Some(parent) if parent.main.child() == Some(id) => parent.radius,
+            _ => node.radius,
+        }
+    }
+
     /// Grows the bud in `slot` of `parent` into a new internode.
     ///
     /// Returns `None` if `parent` was pruned, the slot holds no bud, or
@@ -189,7 +201,9 @@ impl Tree {
     /// in its slot, so it can grow later in another direction. Panics if
     /// `slot` is `Lateral(i)` with `i > 1`.
     /// The new node gets fresh buds placed by phyllotaxis and inherits the
-    /// parent's species. `direction` need not be unit length but must not be zero.
+    /// parent's species. Returns `None` for a zero/non-finite direction, a
+    /// negative/non-finite length, or a non-finite resulting position; no bud
+    /// is consumed. Zero length is allowed but produces no leaf attachments.
     pub fn grow(
         &mut self,
         habitat: &(impl Habitat + ?Sized),
@@ -198,13 +212,16 @@ impl Tree {
         direction: Vec3,
         length: f32,
     ) -> Option<NodeId> {
+        if !length.is_finite() || length < 0.0 || !direction.is_finite() {
+            return None;
+        }
+        let heading = direction.try_normalize()?;
         let id = NodeId(u32::try_from(self.nodes.len()).expect("too many nodes"));
         let step = self.step;
         let p = self.get_mut(parent)?;
         p.slot(slot).bud()?;
-        let heading = direction.normalize();
         let position = p.position + heading * length;
-        if habitat.occupied(position) {
+        if !position.is_finite() || habitat.occupied(position) {
             return None;
         }
         *p.slot_mut(slot) = Slot::Child(id);
@@ -563,6 +580,32 @@ mod tests {
 
     fn tree(species: TreeSpecies) -> Tree {
         Tree::new(Arc::new(species), 42, Vec3::ZERO).unwrap()
+    }
+
+    #[test]
+    fn invalid_growth_keeps_buds_and_foliage_unchanged() {
+        let mut t = tree(TreeSpecies::default());
+        let before = t.leaves().to_vec();
+        for (direction, length) in [
+            (Vec3::ZERO, 1.0),
+            (Vec3::splat(f32::NAN), 1.0),
+            (Vec3::splat(f32::INFINITY), 1.0),
+            (Vec3::Y, -1.0),
+            (Vec3::Y, f32::NAN),
+            (Vec3::Y, f32::INFINITY),
+        ] {
+            assert_eq!(
+                t.grow(&OpenAir, t.root(), SlotIndex::Main, direction, length),
+                None
+            );
+            assert_eq!(t.len(), 1);
+            assert!(t.node(t.root()).main.bud().is_some());
+            assert_eq!(t.leaves(), before);
+        }
+        assert!(
+            t.grow(&OpenAir, t.root(), SlotIndex::Main, Vec3::Y, 1.0)
+                .is_some()
+        );
     }
 
     #[test]

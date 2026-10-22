@@ -87,7 +87,7 @@ fn panel(
             egui::ScrollArea::vertical().show(ui, |ui| {
                 tree_ui(ui, &mut edited);
                 ui.checkbox(&mut debug_enabled, "Debug leaf disks");
-                ui.weak("4-inch disks at blade centers (1 unit = 1 metre).");
+                ui.weak("4-inch default; scales from blade base (1 unit = 1 m).");
                 if let Some(tree) = tree.as_ref() {
                     ui.label(format!("{} leaf placements", tree.0.leaves().len()));
                 }
@@ -221,15 +221,7 @@ fn pins_ui(
 fn species_ui(ui: &mut egui::Ui, s: &mut TreeSpecies) {
     section(ui, "Architecture", |ui| {
         let a = &mut s.architecture;
-        ui.label("Branching");
-        egui::ComboBox::from_id_salt("branching")
-            .selected_text(format!("{:?}", a.branching))
-            .show_ui(ui, |ui| {
-                for pattern in [BranchingPattern::Alternate, BranchingPattern::Opposite] {
-                    ui.selectable_value(&mut a.branching, pattern, format!("{pattern:?}"));
-                }
-            });
-        ui.end_row();
+        arrangement(ui, "Branching", "branching", &mut a.branching);
         angle(ui, "Divergence φ", &mut a.divergence_angle, 0.0..=360.0);
         angle(ui, "Branching ψ", &mut a.branching_angle, 0.0..=180.0);
         angle(ui, "Deflection δ", &mut a.deflection_angle, 0.0..=180.0);
@@ -241,15 +233,7 @@ fn species_ui(ui: &mut egui::Ui, s: &mut TreeSpecies) {
         ui.label("Leaves enabled");
         ui.checkbox(&mut f.enabled, "");
         ui.end_row();
-        ui.label("Arrangement");
-        egui::ComboBox::from_id_salt("foliage arrangement")
-            .selected_text(format!("{:?}", f.arrangement))
-            .show_ui(ui, |ui| {
-                for pattern in [BranchingPattern::Alternate, BranchingPattern::Opposite] {
-                    ui.selectable_value(&mut f.arrangement, pattern, format!("{pattern:?}"));
-                }
-            });
-        ui.end_row();
+        arrangement(ui, "Arrangement", "foliage arrangement", &mut f.arrangement);
         number(ui, "Leaf spacing", &mut f.spacing, 0.01..=10.0);
         number(ui, "Maximum branch radius", &mut f.max_radius, 0.0..=1.0);
         angle(ui, "Leaf divergence", &mut f.divergence_angle, 0.0..=360.0);
@@ -392,6 +376,19 @@ fn species_ui(ui: &mut egui::Ui, s: &mut TreeSpecies) {
         number(ui, "Tip radius", &mut th.tip_radius, 0.001..=1.0);
         number(ui, "Pipe exponent n", &mut th.pipe_exponent, 2.0..=3.0);
     });
+}
+
+/// Architecture and foliage share the choices, but keep independent widget IDs.
+fn arrangement(ui: &mut egui::Ui, label: &str, id: &str, value: &mut BranchingPattern) {
+    ui.label(label);
+    egui::ComboBox::from_id_salt(id)
+        .selected_text(format!("{value:?}"))
+        .show_ui(ui, |ui| {
+            for pattern in [BranchingPattern::Alternate, BranchingPattern::Opposite] {
+                ui.selectable_value(value, pattern, format!("{pattern:?}"));
+            }
+        });
+    ui.end_row();
 }
 
 /// A collapsible group of label/value rows.

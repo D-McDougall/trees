@@ -4,7 +4,7 @@ Status: initial core foliage schema and stored placement implemented; rendering 
 
 The first implementation spans the original units 1–3 at the user’s request: species fields plus stored tree attachments and initial frames. See [the implemented contract](foliage.md). Unit 4 (petiole reorientation) and subsequent rendering/UI/storage units remain pending. The core owns stored leaves rather than generating them only in `trees-mesh`, following the user’s explicit data-model requirement.
 
-A temporary viewer debug mode now draws fixed four-inch disks at initial blade centers, with a visibility toggle, placement count and foliage parameter widgets. This provides placement inspection ahead of the final leaf geometry/material and upload units; petiole reorientation remains pending.
+A temporary viewer debug mode now draws disks with a four-inch default, scaled by blade width/length around a bottom-center anchor, with a visibility toggle, placement count and foliage parameter widgets. This provides placement inspection ahead of the final leaf geometry/material and upload units; petiole reorientation remains pending.
 
 ## Findings from the literature
 

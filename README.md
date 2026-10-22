@@ -108,7 +108,7 @@ is seeded and hashed by position, so the same species, seed and edit history
 always produce the same tree.
 
 Foliage placement follows Longay’s thin-branch rule independently of buds. The core
-stores attachments and initial leaf frames; temporary four-inch debug disks visualize them in the viewer. The Foliage panel
+stores attachments and initial leaf frames; temporary debug disks (four inches by default, scaled from the blade base) visualize them in the viewer. The Foliage panel
 edits placement parameters; textured leaf geometry and uploads remain planned. See the [foliage contract](docs/foliage.md) for parameters and lifecycle.
 
 The full design, including the data structures, the growth loop, the

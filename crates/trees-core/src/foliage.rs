@@ -88,14 +88,7 @@ pub(crate) fn place_leaves(tree: &Tree) -> Vec<Leaf> {
             heading = node.heading;
             let length = f64::from(node.length);
             let end = start + length;
-            let base_radius = node.parent.map_or(node.radius, |p| {
-                let parent = tree.node(p);
-                if parent.main.child() == Some(id) {
-                    parent.radius
-                } else {
-                    node.radius
-                }
-            });
+            let base_radius = tree.base_radius(id);
             if length > 0.0 && base_radius.min(node.radius) < f.max_radius {
                 // Half-open intervals assign junction stations to the distal
                 // segment. Rejected thick stations still advance the phase.
