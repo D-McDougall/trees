@@ -17,6 +17,7 @@
 #![warn(missing_docs)]
 
 pub mod foliage;
+pub mod growth;
 pub mod habitat;
 pub mod node;
 pub mod restricted_jitter;
@@ -24,6 +25,7 @@ pub mod species;
 pub mod tree;
 
 pub use foliage::{Leaf, LeafId};
+pub use growth::{BudGrowth, SamplingConfig, grow_step, sense};
 pub use habitat::{Habitat, OpenAir};
 pub use node::{Bud, BudFate, NodeId, Slot, SlotIndex, TreeNode};
 pub use restricted_jitter::{JitterPoints, RestrictedJitter, RestrictedJitterError};
