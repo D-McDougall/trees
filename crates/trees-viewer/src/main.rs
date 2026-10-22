@@ -12,6 +12,7 @@ use bevy::asset::RenderAssetUsages;
 use bevy::camera::visibility::RenderLayers;
 use bevy::camera::{CameraOutputMode, ClearColorConfig};
 use bevy::camera_controller::pan_orbit_camera::prelude::PanOrbitCamera;
+use bevy::light::NotShadowCaster;
 use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::prelude::*;
 use bevy::render::render_resource::BlendState;
@@ -77,6 +78,14 @@ fn setup(
         MeshMaterial3d(materials.add(Color::srgb(0.35, 0.55, 0.3))),
         Transform::from_rotation(Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2))
             .with_translation(Vec3::Y * scene.ground_height),
+    ));
+    // Dirt facing down, so the ground is not see-through from below.
+    commands.spawn((
+        Mesh3d(meshes.add(Circle::new(6.0))),
+        MeshMaterial3d(materials.add(Color::srgb(0.3, 0.2, 0.12))),
+        Transform::from_rotation(Quat::from_rotation_x(std::f32::consts::FRAC_PI_2))
+            .with_translation(Vec3::Y * scene.ground_height),
+        NotShadowCaster,
     ));
     // The tree's mesh is filled in by `regrow`.
     commands.spawn((
