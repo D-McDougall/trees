@@ -19,12 +19,14 @@
 pub mod foliage;
 pub mod habitat;
 pub mod node;
+pub mod restricted_jitter;
 pub mod species;
 pub mod tree;
 
 pub use foliage::{Leaf, LeafId};
 pub use habitat::{Habitat, OpenAir};
 pub use node::{Bud, BudFate, NodeId, Slot, SlotIndex, TreeNode};
+pub use restricted_jitter::{JitterPoints, RestrictedJitter, RestrictedJitterError};
 pub use species::{
     Architecture, BranchingPattern, Foliage, Gravimorphism, Shadow, Shedding, SpaceColonization,
     SpeciesError, Thickness, TreeSpecies, Tropism, Vigor, VigorModel,
