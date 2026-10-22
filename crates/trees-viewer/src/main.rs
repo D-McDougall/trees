@@ -1,5 +1,4 @@
-//! Minimal Bevy viewer: grows a small test tree with a fixed rule (there is
-//! no growth simulator yet) and draws its tube mesh. A side panel edits the
+//! Bevy viewer for occupancy-aware space colonization and tube meshes. A side panel edits the
 //! seed and species, regrowing the tree on every change, and lists the width
 //! pins. Right-click a branch for a menu that pins its width. Drag to orbit
 //! the camera, right-drag to pan and scroll to zoom.
@@ -18,7 +17,9 @@ use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::prelude::*;
 use bevy::render::render_resource::BlendState;
 use bevy_egui::{EguiGlobalSettings, EguiPlugin, PrimaryEguiContext};
-use trees_core::{Habitat, SlotIndex, Tree, TreeSpecies};
+#[cfg(test)]
+use trees_core::TreeSpecies;
+use trees_core::{Habitat, Tree};
 use trees_mesh::{MeshOptions, MeshStyle, Topology, TreeMesh, TubeOptions, build_mesh};
 
 use branches::{GrownTree, ShownTree, WidthPins};
@@ -28,6 +29,7 @@ mod branches;
 mod camera;
 mod editor;
 mod leaf_debug;
+mod marker_debug;
 mod pick;
 mod ternary;
 
@@ -51,6 +53,7 @@ fn main() {
             branches::BranchesPlugin,
         ))
         .init_resource::<leaf_debug::LeafDebug>()
+        .init_resource::<marker_debug::MarkerDebug>()
         .add_systems(Startup, (setup, leaf_debug::setup))
         .add_systems(
             Update,
@@ -58,6 +61,7 @@ fn main() {
                 regrow.run_if(resource_changed::<TreeParams>),
                 show_tree,
                 leaf_debug::show_leaf_debug,
+                marker_debug::show,
             )
                 .chain(),
         )
@@ -156,7 +160,7 @@ fn setup(
 /// Grows the tree from scratch with the current parameters. The panel only
 /// produces valid species, but if one slips through the last tree stays.
 fn regrow(mut commands: Commands, params: Res<TreeParams>, scene: Res<Scene>) {
-    match test_tree(&*scene, params.species.clone(), params.seed) {
+    match grow_tree(&*scene, &params) {
         Ok(tree) => commands.insert_resource(GrownTree(tree)),
         Err(e) => warn!("kept the last tree: {e}"),
     }
@@ -184,65 +188,45 @@ fn show_tree(
     commands.insert_resource(ShownTree(tree));
 }
 
-/// A stand-in until the growth simulator exists: every bud grows each step,
-/// bent upward a little and jittered by `seed`, with shorter internodes on
-/// higher-order branches. Buds that would grow into `habitat`'s occupied
-/// space stay dormant. Radii follow the pipe model after every step.
-fn test_tree(
+/// Bounded synchronous preview using the core occupancy-aware API.
+fn grow_tree(
     habitat: &impl Habitat,
-    species: TreeSpecies,
-    seed: u64,
-) -> Result<Tree, trees_core::SpeciesError> {
-    const STEPS: u32 = 7;
-    const MAX_ORDER: u16 = 3;
-    const JITTER: f32 = 0.25;
-    let internode = species.architecture.internode_length;
-    let mut tree = Tree::new(Arc::new(species), seed, TREE_ROOT)?;
-    for _ in 0..STEPS {
-        let buds: Vec<_> = tree
-            .iter()
-            .filter(|(_, node)| node.order <= MAX_ORDER)
-            .flat_map(|(id, node)| {
-                node.buds()
-                    .map(move |(slot, bud)| (id, slot, bud.direction, node.order))
-            })
-            .collect();
-        for (id, slot, direction, order) in buds {
-            let slot_number = match slot {
-                SlotIndex::Main => 0,
-                SlotIndex::Lateral(i) => i as u64 + 1,
-            };
-            let key = (id.index() as u64) << 2 | slot_number;
-            let jitter = random_vector(seed, key) * JITTER;
-            let direction = direction + 0.3 * glam::Vec3::Y + jitter;
-            tree.grow(
-                habitat,
-                id,
-                slot,
-                direction,
-                internode * 0.8f32.powi(order.into()),
-            );
+    params: &TreeParams,
+) -> Result<Tree, Box<dyn std::error::Error>> {
+    let sampling = params.sampling()?;
+    // Bound work even when parameters are supplied outside the panel.
+    if params.species.space.perception_distance / sampling.cell_size > 4.001 {
+        return Err("perception distance must not exceed four sampling cells".into());
+    }
+    let mut tree = Tree::new(Arc::new(params.species.clone()), params.seed, TREE_ROOT)?;
+    for _ in 0..6 {
+        let buds = tree.iter().map(|(_, n)| n.buds().count()).sum::<usize>();
+        if tree.len() + buds > 256 {
+            break;
         }
-        tree.advance_step();
+        let added = trees_core::grow_step(&mut tree, habitat, sampling)?;
         tree.update_radii();
+        if added.is_empty() {
+            break;
+        }
     }
     Ok(tree)
 }
 
-/// A vector with components in [-1, 1), hashed from `seed` and `key` with
-/// SplitMix64, so the same seed always gives the same tree.
-fn random_vector(seed: u64, key: u64) -> glam::Vec3 {
-    let mut state = seed ^ key.wrapping_mul(0x9E37_79B9_7F4A_7C15);
-    let mut next = || {
-        state = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
-        let mut z = state;
-        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
-        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
-        z ^= z >> 31;
-        // Top 24 bits as a float in [0, 1), mapped to [-1, 1).
-        (z >> 40) as f32 / (1u64 << 24) as f32 * 2.0 - 1.0
-    };
-    glam::Vec3::new(next(), next(), next())
+#[cfg(test)]
+fn test_tree(
+    habitat: &impl Habitat,
+    species: TreeSpecies,
+    seed: u64,
+) -> Result<Tree, Box<dyn std::error::Error>> {
+    grow_tree(
+        habitat,
+        &TreeParams {
+            species,
+            seed,
+            ..Default::default()
+        },
+    )
 }
 
 fn to_bevy_mesh(mesh: TreeMesh) -> Mesh {
@@ -266,6 +250,84 @@ fn to_bevy_mesh(mesh: TreeMesh) -> Mesh {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn geometry(tree: &Tree) -> Vec<(glam::Vec3, f32)> {
+        tree.iter().map(|(_, n)| (n.position, n.radius)).collect()
+    }
+
+    #[test]
+    fn sampler_validation_matches_core() {
+        for (spacing, jitter) in [
+            (0.0, 0.25),
+            (f32::NAN, 0.25),
+            (1.25, 0.5),
+            (1.25, -0.1),
+            (1.25, f32::INFINITY),
+        ] {
+            assert!(
+                TreeParams {
+                    point_spacing: spacing,
+                    jitter,
+                    ..Default::default()
+                }
+                .sampling()
+                .is_err()
+            );
+        }
+        for jitter in [0.0, 0.49] {
+            assert!(
+                TreeParams {
+                    jitter,
+                    ..Default::default()
+                }
+                .sampling()
+                .is_ok()
+            );
+        }
+    }
+
+    #[test]
+    fn parameter_changes_regrow_reproducibly_and_debug_preserves_tree_and_pins() {
+        let mut app = App::new();
+        app.init_resource::<TreeParams>()
+            .init_resource::<marker_debug::MarkerDebug>()
+            .init_resource::<WidthPins>()
+            .insert_resource(Scene { ground_height: 0.0 })
+            .add_systems(Update, regrow.run_if(resource_changed::<TreeParams>));
+        app.update();
+        let original = geometry(&app.world().resource::<GrownTree>().0);
+        app.world_mut()
+            .resource_mut::<WidthPins>()
+            .0
+            .push((vec![], 0.5));
+        for (spacing, jitter) in [(1.5, 0.25), (1.25, 0.4)] {
+            {
+                let mut params = app.world_mut().resource_mut::<TreeParams>();
+                params.point_spacing = spacing;
+                params.jitter = jitter;
+            }
+            app.update();
+            let changed = geometry(&app.world().resource::<GrownTree>().0);
+            assert_ne!(original, changed);
+            let expected = grow_tree(
+                &Scene { ground_height: 0.0 },
+                app.world().resource::<TreeParams>(),
+            )
+            .unwrap();
+            assert_eq!(changed, geometry(&expected));
+            for enabled in [true, false] {
+                app.world_mut()
+                    .resource_mut::<marker_debug::MarkerDebug>()
+                    .enabled = enabled;
+                app.update();
+                assert_eq!(changed, geometry(&app.world().resource::<GrownTree>().0));
+                assert_eq!(app.world().resource::<WidthPins>().0, vec![(vec![], 0.5)]);
+            }
+        }
+        *app.world_mut().resource_mut::<TreeParams>() = TreeParams::default();
+        app.update();
+        assert_eq!(original, geometry(&app.world().resource::<GrownTree>().0));
+    }
 
     #[test]
     fn foliage_controls_change_placements_without_changing_branches() {

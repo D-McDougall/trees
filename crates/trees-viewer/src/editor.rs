@@ -21,12 +21,39 @@ use crate::branches::{BranchMenu, BranchPath, ShownTree, WidthPins, path_label};
 use crate::leaf_debug::LeafDebug;
 
 /// What the tree is grown from. Changing it triggers a regrow.
-#[derive(Resource, Clone, Default, PartialEq)]
+#[derive(Resource, Clone, PartialEq)]
 pub struct TreeParams {
     /// Seed for the tree's randomness.
     pub seed: u64,
+    /// Sampling cell width in world units (metres).
+    pub point_spacing: f32,
+    /// Displacement as a fraction of spacing, strictly below one half.
+    pub jitter: f32,
     /// Species being edited.
     pub species: TreeSpecies,
+}
+
+impl Default for TreeParams {
+    fn default() -> Self {
+        Self {
+            seed: 0,
+            point_spacing: 1.25,
+            jitter: 0.25,
+            species: TreeSpecies::default(),
+        }
+    }
+}
+
+impl TreeParams {
+    pub fn sampling(
+        &self,
+    ) -> Result<trees_core::SamplingConfig, trees_core::RestrictedJitterError> {
+        trees_core::RestrictedJitter::new(self.point_spacing, self.jitter, self.seed)?;
+        Ok(trees_core::SamplingConfig {
+            cell_size: self.point_spacing,
+            jitter: self.jitter,
+        })
+    }
 }
 
 /// Current width of the panel, in logical pixels. The panel is drawn on
@@ -60,6 +87,7 @@ fn panel(
     mut contexts: EguiContexts,
     mut params: ResMut<TreeParams>,
     mut leaf_debug: ResMut<LeafDebug>,
+    mut markers: ResMut<crate::marker_debug::MarkerDebug>,
     mut pins: ResMut<WidthPins>,
     tree: Option<Res<ShownTree>>,
     mut menu: ResMut<BranchMenu>,
@@ -73,6 +101,7 @@ fn panel(
     let mut edited = params.clone();
     let mut edited_pins = pins.clone();
     let mut debug_enabled = leaf_debug.enabled;
+    let mut markers_enabled = markers.enabled;
     let mut root = egui::Ui::new(
         ctx.clone(),
         "viewport".into(),
@@ -86,6 +115,8 @@ fn panel(
         .show(&mut root, |ui| {
             egui::ScrollArea::vertical().show(ui, |ui| {
                 tree_ui(ui, &mut edited);
+                ui.checkbox(&mut markers_enabled, "Debug sampling markers");
+                ui.weak("Raw grid near up to 16 live bud nodes; max 4,000 markers.");
                 ui.checkbox(&mut debug_enabled, "Debug leaf disks");
                 ui.weak("0.333 ft default; scales from blade base.");
                 if let Some(tree) = tree.as_ref() {
@@ -101,7 +132,7 @@ fn panel(
                     }
                 }
                 ui.separator();
-                species_ui(ui, &mut edited.species);
+                species_ui(ui, &mut edited.species, edited.point_spacing);
             });
         })
         .response
@@ -109,6 +140,9 @@ fn panel(
         .width();
     if debug_enabled != leaf_debug.enabled {
         leaf_debug.enabled = debug_enabled;
+    }
+    if markers_enabled != markers.enabled {
+        markers.enabled = markers_enabled;
     }
     panel_width.0 = width;
     if edited != *params {
@@ -137,6 +171,14 @@ fn tree_ui(ui: &mut egui::Ui, params: &mut TreeParams) {
         ui.add(DragValue::new(&mut params.seed));
         ui.end_row();
 
+        length(
+            ui,
+            "Point spacing",
+            &mut params.point_spacing,
+            (params.species.space.perception_distance / 4.0).max(0.25)..=5.0,
+        );
+        number(ui, "Point jitter", &mut params.jitter, 0.0..=0.49);
+
         // A mockup: presets are not wired up yet, so the menu is empty.
         ui.label("Preset");
         egui::ComboBox::from_id_salt("preset")
@@ -146,7 +188,8 @@ fn tree_ui(ui: &mut egui::Ui, params: &mut TreeParams) {
             });
         ui.end_row();
     });
-    ui.weak("Grayed-out parameters have no effect until the growth simulator exists.");
+    ui.weak("Grayed-out parameters are not simulated yet.");
+    ui.weak("Preview: up to 6 steps / 256 nodes. Perception ≤ 4 × point spacing.");
 }
 
 /// The list of width pins. A pin is grayed out while its branch is missing
@@ -222,7 +265,7 @@ fn pins_ui(
     clicked
 }
 
-fn species_ui(ui: &mut egui::Ui, s: &mut TreeSpecies) {
+fn species_ui(ui: &mut egui::Ui, s: &mut TreeSpecies, spacing: f32) {
     section(ui, "Architecture", |ui| {
         let a = &mut s.architecture;
         arrangement(ui, "Branching", "branching", &mut a.branching);
@@ -342,7 +385,6 @@ fn species_ui(ui: &mut egui::Ui, s: &mut TreeSpecies) {
     });
 
     section(ui, "Space colonization", |ui| {
-        ui.disable();
         let c = &mut s.space;
         length(
             ui,
@@ -360,8 +402,9 @@ fn species_ui(ui: &mut egui::Ui, s: &mut TreeSpecies) {
             ui,
             "Perception distance r",
             &mut c.perception_distance,
-            c.occupancy_radius + 0.01..=50.0,
+            c.occupancy_radius + 0.01..=spacing * 4.0,
         );
+        ui.disable();
         number(
             ui,
             "Markers per vigor",

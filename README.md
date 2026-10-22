@@ -22,7 +22,7 @@ growth are in place; light and vigor simulation are still planned.
 | --- | --- | --- |
 | [`trees-core`](crates/trees-core) | The tree graph (an arena of internodes whose empty child slots are buds), species parameters with validation and two presets, growing, pruning and shedding internodes, tip-to-base folds, pipe-model branch radii with width pins, stored species-dependent leaf attachments and initial frames, the `Habitat` trait, and deterministic occupancy-aware space colonization | A light grid, vigor allocation and automatic shedding |
 | [`trees-mesh`](crates/trees-mesh) | Wireframe output: one line per internode | Swept generalized cylinders, leaf instances, levels of detail |
-| [`trees-viewer`](crates/trees-viewer) | A Bevy app that grows a stand-in test tree and shows its tube mesh on a ground disc, with an orbit camera and an egui side panel that edits the seed and species growth parameters, regrowing the tree on each change. Right-click a branch for a menu that pins its width, re-solving the pipe model live; pins are marked in the view and listed in the panel | Brush, prune, bend and undo tools |
+| [`trees-viewer`](crates/trees-viewer) | A Bevy app that grows an occupancy-aware tree and shows its tube mesh on a ground disc, with an orbit camera and an egui side panel that edits the seed and species growth parameters, regrowing the tree on each change. Right-click a branch for a menu that pins its width, re-solving the pipe model live; pins are marked in the view and listed in the panel | Brush, prune, bend and undo tools |
 
 ## Quick start
 
@@ -176,3 +176,13 @@ Markers determine direction only; `architecture.internode_length` determines
 branch length. This stage does not allocate light or vigor or blend tropisms.
 Sampling errors leave the tree unchanged. Radius/foliage refreshes beyond those
 performed by `Tree::grow` can be requested with `Tree::update_radii` after a step.
+
+The viewer's point spacing is a sampling-cell width in world units (1 unit =
+1 metre), independent of internode length. Jitter is a fraction of that width,
+from 0 to 0.49. Perception angle, distance, and occupancy radius drive the core
+API. The preview runs at most six steps and 256 nodes; distance is limited to
+four sampling cells to bound query cost. Spacing ranges from 0.25 to 5 metres,
+subject to that distance limit. Sampling edits regrow from the same seed, then
+reapply width pins by branch path. Debug sampling markers show the raw grid
+(including occupied points) in perception AABBs around up to 16 live bud nodes,
+capped at 4,000 markers. This display-only toggle never changes growth.
