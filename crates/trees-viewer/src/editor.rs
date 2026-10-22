@@ -3,8 +3,8 @@
 //! scratch.
 //!
 //! Every input is limited to the range [`TreeSpecies::validate`] accepts, so
-//! the panel cannot produce an invalid species. Parameters the stand-in test
-//! tree does not read yet are shown grayed out and cannot be edited.
+//! the panel cannot produce an invalid species. Parameters not simulated yet
+//! are shown grayed out, except the direction blend preview.
 
 use std::f32::consts::{PI, TAU};
 use std::ops::RangeInclusive;
@@ -304,11 +304,24 @@ fn species_ui(ui: &mut egui::Ui, s: &mut TreeSpecies) {
             0.0..=180.0,
         );
         angle(ui, "Main set-point", &mut t.main_set_point, 0.0..=180.0);
-        number(ui, "Straightness α", &mut t.straightness, 0.0..=1.0);
-        number(ui, "Gravitropism β", &mut t.gravitropism, 0.0..=1.0);
-        // These must sum to 1; a triangle picker will replace them, so
-        // they stay read-only until then.
-        number(ui, "Environment γ", &mut t.environment, 0.0..=1.0);
+        // The weights can be edited together even while tropism simulation
+        // is pending. Use a fresh scope because the angle rows are disabled.
+    });
+    section(ui, "Direction weights", |ui| {
+        let t = &mut s.tropism;
+        let mut weights = [t.straightness, t.gravitropism, t.environment];
+        if ui
+            .add(crate::ternary::TernaryPicker::new(
+                &mut weights,
+                ["Straightness α", "Gravitropism β", "Environment γ"],
+            ))
+            .changed()
+        {
+            [t.straightness, t.gravitropism, t.environment] = weights;
+        }
+        ui.end_row();
+        ui.weak("Direction weights are not simulated yet.");
+        ui.end_row();
     });
 
     section(ui, "Gravimorphism", |ui| {

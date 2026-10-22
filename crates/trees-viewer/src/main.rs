@@ -29,6 +29,7 @@ mod camera;
 mod editor;
 mod leaf_debug;
 mod pick;
+mod ternary;
 
 fn main() {
     App::new()
