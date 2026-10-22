@@ -94,13 +94,20 @@ fn setup(
         MeshMaterial3d(materials.add(Color::srgb(0.45, 0.32, 0.22))),
     ));
     commands.insert_resource(scene);
+    // Sunlight from high in the sky, so that every part of the tree is lit
+    // however tall it grows, plus a soft fill for the sides facing away.
     commands.spawn((
-        PointLight {
+        DirectionalLight {
+            illuminance: 4_000.0,
             shadow_maps_enabled: true,
             ..default()
         },
-        Transform::from_xyz(4.0, 8.0, 4.0),
+        Transform::from_xyz(4.0, 10.0, 6.0).looking_at(Vec3::ZERO, Vec3::Y),
     ));
+    commands.insert_resource(GlobalAmbientLight {
+        brightness: 600.0,
+        ..default()
+    });
     // Orbit about the tree's root.
     let eye = TREE_ROOT + Vec3::new(-5.0, 5.0, 22.0);
     commands.spawn((
