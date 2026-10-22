@@ -53,7 +53,7 @@ Eight structures carry the whole system; the tree graph and the two spatial stru
 | **Species parameters** | An immutable record: apical control λ, light exponent κ, max shoot length, tropism angle and blend weights, phyllotaxis and branching angles, perception and occupancy radii, shadow constants, pipe exponent, shedding threshold. | One record per species makes trees reproducible and lets users save and compare presets. |
 | **Marker set + spatial index** | Attraction points that represent unclaimed space, stored in a uniform grid or k-d tree. | Assigning markers to buds is the main bottleneck when done by brute force; a spatial index turns it from buds × markers into a local query. |
 | **Light grid** | Sparse voxel grid of shadow values, stored as a hash map from coarse-cell key to a dense block allocated on demand. | Dense locality for fast shadow writes, without a fixed world size (Hart 2020). |
-| **Constraint set** | User pins that the simulator must respect: width at a point, bend handles, protected (unsheddable) branches, growth regions. | Separates user intent from simulated state so regrowth can re-apply it. |
+| **Constraint set** | User pins that the simulator must respect: width at a node (an absolute radius, dropped when the node is cut or shed), bend handles, protected (unsheddable) branches, growth regions. | Separates user intent from simulated state so regrowth can re-apply it. |
 | **Edit history** | An ordered log of growth steps and user operations, with periodic snapshots of the tree graph. | Gives full undo and redo and reproducible saves. |
 | **Render snapshot** | A frozen copy of the tree graph plus derived skeleton curves, mesh buffers, leaf instances and LOD levels. | Lets the renderer read without locking the simulator. |
 
@@ -93,7 +93,7 @@ Control works by changing the simulator's inputs, not by overriding its outputs.
 | Selective growth | Picks a branch to grow | Restricts active buds to that subtree; all buds still claim space |
 | Prune | Cuts a branch | Cut: leaves a stump that keeps its thickness; stumps are never removed |
 | Bend | Drags a handle on a branch | Solves an elastic deformation where thick branches resist more than thin ones |
-| Thickness pins | Sets trunk or branch width at a point | Each subtree solves for its own pipe exponent so the pins hold |
+| Thickness pins | Sets trunk or branch width at a node | The pinned node keeps exactly that radius as the tree grows: the subtree below each pin solves numerically for its own pipe exponent (Longay 2014 §5.3.2), and the pin counts as a tip of that radius above it. A pin no wider than the thickest branch or stump it carries cannot be solved; it widens its node but never pinches it |
 | Parameter panel | Picks a species preset and tunes its sliders, including a triangle widget for the straight / gravity / space blend, before growth starts | Sets the species record, fixed for the tree's lifetime |
 | Undo / redo | Steps backward or forward through every growth step and edit | Restores the nearest snapshot and replays the full edit history to that point |
 
