@@ -135,14 +135,16 @@ fn wireframe(tree: &Tree) -> TreeMesh {
 
 /// The child that continues `node`'s axis after thickest-path re-topology:
 /// the thickest child, or on a tie the first (the original continuing axis).
+/// A stump continues the axis only if every child is a stump: it keeps the
+/// radius of the branch it was, so it can be the thickest, but the trunk
+/// should carry on into living wood rather than end at a stub.
 fn continuation(tree: &Tree, node: &TreeNode) -> Option<NodeId> {
-    node.children().reduce(|best, c| {
-        if tree.node(c).radius > tree.node(best).radius {
-            c
-        } else {
-            best
-        }
-    })
+    let rank = |id: NodeId| {
+        let n = tree.node(id);
+        (!n.stump, n.radius)
+    };
+    node.children()
+        .reduce(|best, c| if rank(c) > rank(best) { c } else { best })
 }
 
 /// Splits the tree into axes along the thickest path (design document,
@@ -465,6 +467,26 @@ mod tests {
         assert_eq!(axes(&t), vec![vec![root, a], vec![b]]);
         t.node_mut(b).radius *= 2.0;
         assert_eq!(axes(&t), vec![vec![root, b], vec![a]]);
+    }
+
+    #[test]
+    fn stumps_are_capped_and_never_continue_an_axis() {
+        let (mut t, [root, a, b, l1, l2]) = sapling();
+        // l1 is thicker than a, so it would otherwise continue the trunk.
+        t.node_mut(l1).radius = t.node(a).radius * 2.0;
+        let c = t.grow(&OpenAir, l1, SlotIndex::Main, Vec3::X, 0.5).unwrap();
+        assert_eq!(axes(&t)[0], vec![root, l1, c]);
+        t.shed(l1);
+        assert_eq!(axes(&t), vec![vec![root, a, b], vec![l1], vec![l2]]);
+        let mesh = tube_mesh(&t);
+        let stump = t.node(l1);
+        assert!((0..mesh.positions.len() as u32).any(|i| {
+            (v(&mesh, i) - stump.position).length() < 1e-6
+                && (Vec3::from_array(mesh.normals[i as usize]) - stump.heading).length() < 1e-6
+        }));
+        // With only stumps left, the thickest still continues the axis.
+        t.shed(a);
+        assert_eq!(axes(&t), vec![vec![root, l1], vec![a]]);
     }
 
     #[test]

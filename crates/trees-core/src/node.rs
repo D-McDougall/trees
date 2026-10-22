@@ -84,7 +84,7 @@ impl Bud {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Slot {
     /// Nothing here: an unused lateral slot (alternate branching uses one of
-    /// two), or a branch that was shed or pruned.
+    /// two), a pruned branch, or any slot of a stump (see [`TreeNode::stump`]).
     Empty,
     /// A live or aborted bud that has not grown.
     Bud(Bud),
@@ -150,8 +150,9 @@ pub struct TreeNode {
     pub lateral: Vec3,
     /// Length of the internode, from [`TreeNode::base`] to `position`.
     pub length: f32,
-    /// Current radius from the pipe model. Never decreases, so trunks keep the
-    /// thickness of branches that were later shed.
+    /// Current radius from the pipe model. Never decreases, and a shed branch
+    /// leaves a stump that keeps its radius, so trunks keep the thickness of
+    /// branches that were later shed.
     pub radius: f32,
 
     /// 0 for the trunk; a lateral on an order-n axis starts an order n+1 axis.
@@ -171,6 +172,12 @@ pub struct TreeNode {
     pub main: Slot,
     /// Lateral (axillary) slots. Alternate branching uses only `laterals[0]`.
     pub laterals: [Slot; 2],
+
+    /// True if this node is the remaining base of a shed branch (see
+    /// [`Tree::shed`](crate::Tree::shed)). A stump has only empty slots, so it
+    /// never grows, and it cannot be shed again. It keeps its radius, so it
+    /// still contributes its cross-section to the pipe model below it.
+    pub stump: bool,
 }
 
 impl TreeNode {
@@ -229,6 +236,7 @@ impl TreeNode {
             internode_count: 1,
             main,
             laterals,
+            stump: false,
         }
     }
 
@@ -281,7 +289,8 @@ impl TreeNode {
         self.slots().filter_map(|(i, s)| s.bud().map(|b| (i, b)))
     }
 
-    /// True if nothing has grown from this node yet.
+    /// True if no child grows from this node: nothing has grown yet, or
+    /// everything that grew was pruned or shed (a stump is terminal).
     pub fn is_terminal(&self) -> bool {
         self.children().next().is_none()
     }

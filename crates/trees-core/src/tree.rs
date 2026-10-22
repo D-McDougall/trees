@@ -30,7 +30,8 @@ pub struct Tree {
     seed: u64,
     /// Number of completed growth steps (seasons).
     step: u32,
-    /// `None` marks a pruned or shed node; its id is retired, not reused.
+    /// `None` marks a pruned node or one removed by shedding; its id is
+    /// retired, not reused. A shed branch's own node stays, as a stump.
     nodes: Vec<Option<TreeNode>>,
     live: usize,
 }
@@ -171,6 +172,9 @@ impl Tree {
 
     /// Removes the subtree rooted at `id` and empties its parent's slot.
     /// Returns how many nodes were removed. The root cannot be pruned.
+    ///
+    /// This is the user's edit, so unlike [`Tree::shed`] it leaves no stump,
+    /// and it can remove a stump.
     pub fn prune(&mut self, id: NodeId) -> usize {
         let Some(parent) = self.get(id).and_then(|n| n.parent) else {
             return 0;
@@ -181,7 +185,56 @@ impl Tree {
                 *slot = Slot::Empty;
             }
         }
-        let mut stack = vec![id];
+        self.remove_subtrees(vec![id])
+    }
+
+    /// Sheds the branch at `id` (self-pruning), leaving node `id` as a stump.
+    ///
+    /// Everything that grew from `id` is removed, and `id` itself is kept
+    /// with [`TreeNode::stump`] set and all its slots emptied, so it never
+    /// regrows. Stumps are kept for appearance (a shed branch leaves a
+    /// visible stub) and for the pipe model: the stump keeps its radius, so
+    /// the trunk below stays as thick as the branches it once carried.
+    ///
+    /// The stump is shortened to just reach out of its parent's bark: with θ
+    /// the angle between the two headings, its length becomes
+    /// `parent.radius / sin θ`, the distance along its heading from the
+    /// parent's axis to the surface of a cylinder of the parent's radius.
+    /// It is never lengthened, which also covers θ near 0 (a shed continuing
+    /// axis), where that distance goes to infinity. The stump's base stays
+    /// at the parent's tip; its tip moves in.
+    ///
+    /// Returns how many nodes were removed, not counting the stump. Returns
+    /// 0 and changes nothing if `id` is missing, the root, or already a stump.
+    pub fn shed(&mut self, id: NodeId) -> usize {
+        let Some(node) = self.get(id).filter(|n| !n.stump) else {
+            return 0;
+        };
+        let Some(parent) = node.parent.map(|p| self.node(p)) else {
+            return 0;
+        };
+        let sin = node.heading.cross(parent.heading).length();
+        let length = if parent.radius < node.length * sin {
+            parent.radius / sin
+        } else {
+            node.length
+        };
+
+        let node = self.node_mut(id);
+        let children: Vec<NodeId> = node.children().collect();
+        let base = node.base();
+        node.position = base + node.heading * length;
+        node.length = length;
+        node.main = Slot::Empty;
+        node.laterals = [Slot::Empty, Slot::Empty];
+        node.internode_count = 1;
+        node.stump = true;
+        self.remove_subtrees(children)
+    }
+
+    /// Removes the subtrees rooted at `roots`, retiring their ids, and
+    /// returns how many nodes were removed. Callers fix up the parents' slots.
+    fn remove_subtrees(&mut self, mut stack: Vec<NodeId>) -> usize {
         let mut removed = 0;
         while let Some(n) = stack.pop() {
             if let Some(node) = self.nodes[n.index()].take() {
@@ -380,6 +433,134 @@ mod tests {
         assert_ne!(a, b);
         assert!(t.get(a).is_none());
         assert_eq!(t.prune(root), 0, "root cannot be pruned");
+    }
+
+    /// A trunk `root → a → b` with a lateral `l` on `a` that has two
+    /// internodes of its own, at 60° to the trunk. Returns `[a, b, l]`.
+    fn forked() -> (Tree, [NodeId; 3]) {
+        let mut t = tree(TreeSpecies::default());
+        let root = t.root();
+        let a = t
+            .grow(&OpenAir, root, SlotIndex::Main, Vec3::Y, 1.0)
+            .unwrap();
+        let b = t.grow(&OpenAir, a, SlotIndex::Main, Vec3::Y, 1.0).unwrap();
+        let dir = Vec3::new(3.0f32.sqrt(), 1.0, 0.0);
+        let l = t
+            .grow(&OpenAir, a, SlotIndex::Lateral(0), dir, 1.0)
+            .unwrap();
+        let m = t.grow(&OpenAir, l, SlotIndex::Main, dir, 1.0).unwrap();
+        t.grow(&OpenAir, m, SlotIndex::Lateral(0), Vec3::Z, 1.0)
+            .unwrap();
+        t.node_mut(a).radius = 0.1;
+        t.node_mut(l).radius = 0.05;
+        (t, [a, b, l])
+    }
+
+    #[test]
+    fn shed_removes_descendants_and_leaves_a_stump() {
+        let (mut t, [a, _, l]) = forked();
+        let before = t.len();
+        let m = t.node(l).main.child().unwrap();
+        assert_eq!(t.shed(l), 2);
+        assert_eq!(t.len(), before - 2);
+        assert!(t.get(m).is_none());
+
+        let stump = t.node(l);
+        assert!(stump.stump && stump.is_terminal());
+        assert_eq!(stump.radius, 0.05, "radius is kept");
+        assert_eq!(stump.internode_count, 1);
+        assert!(stump.slots().all(|(_, s)| *s == Slot::Empty));
+        assert!(stump.laterals.iter().all(|s| *s == Slot::Empty));
+        assert_eq!(t.node(a).laterals[0], Slot::Child(l), "parent keeps it");
+        assert!(
+            t.grow(&OpenAir, l, SlotIndex::Main, Vec3::Y, 1.0).is_none(),
+            "a stump never regrows"
+        );
+    }
+
+    #[test]
+    fn stump_just_reaches_parent_bark() {
+        let (mut t, [a, _, l]) = forked();
+        let base = t.node(l).base();
+        let heading = t.node(l).heading;
+        t.shed(l);
+        let stump = t.node(l);
+        // 60° from the trunk: r / sin 60°.
+        let expected = 0.1 / 60f32.to_radians().sin();
+        assert!((stump.length - expected).abs() < 1e-5);
+        assert!(stump.length <= 1.0);
+        assert!((stump.base() - base).length() < 1e-5, "base stays put");
+        assert!((stump.position - (base + heading * expected)).length() < 1e-5);
+        // The tip is exactly the parent's radius away from the parent's axis.
+        let p = t.node(a);
+        let off = stump.position - p.position;
+        assert!(((off - p.heading * off.dot(p.heading)).length() - 0.1).abs() < 1e-5);
+    }
+
+    #[test]
+    fn stump_is_never_lengthened() {
+        // Shedding the continuing axis: parallel headings, so r / sin θ is
+        // unbounded and the original length is kept.
+        let (mut t, [a, b, _]) = forked();
+        t.shed(b);
+        assert_eq!(t.node(b).length, 1.0);
+        // A parent thicker than the branch is long also keeps the length.
+        let (mut t, [_, _, l]) = forked();
+        t.node_mut(a).radius = 5.0;
+        t.shed(l);
+        assert_eq!(t.node(l).length, 1.0);
+    }
+
+    #[test]
+    fn shed_refuses_root_stumps_and_missing_nodes() {
+        let (mut t, [_, _, l]) = forked();
+        let root = t.root();
+        assert_eq!(t.shed(root), 0, "root cannot be shed");
+        assert!(!t.node(root).stump);
+        t.shed(l);
+        let (len, stump) = (t.len(), t.node(l).clone());
+        assert_eq!(t.shed(l), 0, "a stump cannot be shed again");
+        assert_eq!(t.len(), len);
+        assert_eq!(t.node(l).length, stump.length);
+        assert_eq!(t.node(l).position, stump.position);
+        let m = NodeId(l.0 + 1);
+        assert!(t.get(m).is_none());
+        assert_eq!(t.shed(m), 0, "already removed");
+        assert_eq!(t.shed(NodeId(999)), 0, "never existed");
+        // A user prune still removes the stump itself.
+        assert_eq!(t.prune(l), 1);
+    }
+
+    #[test]
+    fn ids_are_never_reused_after_shed() {
+        let (mut t, [_, b, l]) = forked();
+        let m = t.node(l).main.child().unwrap();
+        t.shed(l);
+        let c = t.grow(&OpenAir, b, SlotIndex::Main, Vec3::Y, 1.0).unwrap();
+        assert!(c.index() > m.index(), "fresh id, not the shed one");
+        assert!(t.get(m).is_none());
+    }
+
+    #[test]
+    fn fold_up_sees_stump_radius() {
+        // A pipe-model fold that uses each node's stored radius at the tips:
+        // the stump's cross-section still reaches the trunk.
+        let (mut t, [a, b, l]) = forked();
+        t.prune(b);
+        t.shed(l);
+        let radii = t.fold_up(|node, kids| {
+            let sum: f32 = kids.map(|r: &f32| r * r).sum();
+            if node.is_terminal() {
+                node.radius
+            } else {
+                sum.sqrt()
+            }
+        });
+        assert_eq!(radii[l.index()], Some(0.05));
+        assert!((radii[a.index()].unwrap() - 0.05).abs() < 1e-6);
+        assert!((radii[t.root().index()].unwrap() - 0.05).abs() < 1e-6);
+        let counts = t.fold_up(|_, kids| 1 + kids.sum::<u32>());
+        assert_eq!(counts[t.root().index()], Some(3));
     }
 
     #[test]
