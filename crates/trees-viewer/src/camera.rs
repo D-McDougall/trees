@@ -19,6 +19,8 @@ use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use bevy_egui::input::EguiWantsInput;
 
+use crate::editor::PanelWidth;
+
 const ORBIT: MouseButton = MouseButton::Left;
 const PAN: [MouseButton; 2] = [MouseButton::Right, MouseButton::Middle];
 
@@ -42,6 +44,7 @@ fn mouse_input(
     scroll: Res<AccumulatedMouseScroll>,
     window: Single<&Window, With<PrimaryWindow>>,
     egui: Res<EguiWantsInput>,
+    panel: Res<PanelWidth>,
     mut last_cursor: Local<Option<Vec2>>,
     mut cameras: Query<&mut PanOrbitCamera>,
 ) {
@@ -53,7 +56,9 @@ fn mouse_input(
         .map_or(Vec2::ZERO, |(now, then)| now - then);
     *last_cursor = cursor;
     // Scrolling the panel must not zoom the view.
-    let over_panel = egui.wants_pointer_input();
+    // egui reports popups such as open drop-down menus; the panel itself is
+    // checked by position.
+    let over_panel = egui.wants_pointer_input() || cursor.is_some_and(|c| c.x < panel.0);
     let zoom = if over_panel { 0.0 } else { scroll.delta.y }
         * match scroll.unit {
             MouseScrollUnit::Line => 40.0,

@@ -24,6 +24,12 @@ pub struct TreeParams {
     pub species: TreeSpecies,
 }
 
+/// Current width of the panel, in logical pixels. The panel is drawn on
+/// egui's background layer, which egui does not count as "over the UI", so
+/// the camera uses this to ignore the pointer over the panel.
+#[derive(Resource, Default)]
+pub struct PanelWidth(pub f32);
+
 /// Width of the panel when the viewer opens, in logical pixels.
 const PANEL_WIDTH: f32 = 300.0;
 
@@ -33,6 +39,7 @@ pub struct EditorPlugin;
 impl Plugin for EditorPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<TreeParams>()
+            .init_resource::<PanelWidth>()
             .add_systems(EguiPrimaryContextPass, panel);
     }
 }
@@ -40,6 +47,7 @@ impl Plugin for EditorPlugin {
 fn panel(
     mut contexts: EguiContexts,
     mut params: ResMut<TreeParams>,
+    mut panel_width: ResMut<PanelWidth>,
     window: Single<&Window, With<PrimaryWindow>>,
     mut camera: Single<&mut Camera, With<Camera3d>>,
 ) -> Result {
@@ -65,6 +73,7 @@ fn panel(
         .response
         .rect
         .width();
+    panel_width.0 = width;
     if edited != *params {
         *params = edited;
     }
