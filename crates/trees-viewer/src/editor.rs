@@ -1,6 +1,6 @@
 //! Side panel for editing the seed and every species parameter, and for
-//! inspecting the selected branch and the width pins. Any parameter change
-//! regrows the whole tree from scratch.
+//! listing the width pins. Any parameter change regrows the whole tree from
+//! scratch.
 //!
 //! Every input is limited to the range [`TreeSpecies::validate`] accepts, so
 //! the panel cannot produce an invalid species. Parameters the stand-in test
@@ -15,9 +15,9 @@ use bevy::window::PrimaryWindow;
 use bevy_egui::egui::{self, DragValue};
 use bevy_egui::input::EguiWantsInput;
 use bevy_egui::{EguiContexts, EguiPrimaryContextPass};
-use trees_core::{BranchingPattern, SlotIndex, Tree, TreeSpecies, VigorModel};
+use trees_core::{BranchingPattern, Tree, TreeSpecies, VigorModel};
 
-use crate::branches::{Selection, ShownTree, WidthPins, path_label};
+use crate::branches::{ShownTree, WidthPins, path_label};
 
 /// What the tree is grown from. Changing it triggers a regrow.
 #[derive(Resource, Clone, Default, PartialEq)]
@@ -54,13 +54,11 @@ impl Plugin for EditorPlugin {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn panel(
     mut contexts: EguiContexts,
     mut params: ResMut<TreeParams>,
     mut pins: ResMut<WidthPins>,
     tree: Option<Res<ShownTree>>,
-    selection: Res<Selection>,
     mut panel_width: ResMut<PanelWidth>,
     window: Single<&Window, With<PrimaryWindow>>,
     mut camera: Single<&mut Camera, With<Camera3d>>,
@@ -84,7 +82,7 @@ fn panel(
             egui::ScrollArea::vertical().show(ui, |ui| {
                 tree_ui(ui, &mut edited);
                 let tree = tree.as_deref().map(|t| &t.0);
-                branch_ui(ui, tree, selection.0.as_deref(), &mut edited_pins);
+                pins_ui(ui, tree, &mut edited_pins);
                 ui.separator();
                 species_ui(ui, &mut edited.species);
             });
@@ -131,37 +129,11 @@ fn tree_ui(ui: &mut egui::Ui, params: &mut TreeParams) {
     ui.weak("Grayed-out parameters have no effect until the growth simulator exists.");
 }
 
-/// The selected branch and the list of width pins. A pin is grayed out
-/// while its branch is missing from the tree (or is a stump), and its radius
-/// is highlighted when the pin is too thin to hold and its node is widened.
-fn branch_ui(
-    ui: &mut egui::Ui,
-    tree: Option<&Tree>,
-    selected: Option<&[SlotIndex]>,
-    pins: &mut WidthPins,
-) {
+/// The list of width pins. A pin is grayed out while its branch is missing
+/// from the tree (or is a stump), and its radius is highlighted when the
+/// pin is too thin to hold and its node is widened.
+fn pins_ui(ui: &mut egui::Ui, tree: Option<&Tree>, pins: &mut WidthPins) {
     let Some(tree) = tree else { return };
-    section(ui, "Selected branch", |ui| {
-        let found = selected.and_then(|path| Some((path, tree.node_at(path)?)));
-        let Some((path, id)) = found else {
-            ui.weak("Click a branch to select it.");
-            ui.end_row();
-            return;
-        };
-        let node = tree.node(id);
-        ui.label("Branch");
-        ui.label(format!("#{} ({})", id.index(), path_label(path)));
-        ui.end_row();
-        ui.label("Radius");
-        ui.label(format!("{:.4}", node.radius));
-        ui.end_row();
-        let pinned = pins.0.iter().any(|(p, _)| p == path);
-        if !pinned && !node.stump && ui.button("Pin at this width").clicked() {
-            pins.0.push((path.to_vec(), node.radius));
-        }
-        ui.end_row();
-    });
-
     egui::CollapsingHeader::new("Width pins")
         .default_open(true)
         .show(ui, |ui| {

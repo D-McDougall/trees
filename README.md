@@ -22,7 +22,7 @@ simulator is not written yet.
 | --- | --- | --- |
 | [`trees-core`](crates/trees-core) | The tree graph (an arena of internodes whose empty child slots are buds), species parameters with validation and two presets, growing, pruning and shedding internodes, tip-to-base folds, pipe-model branch radii with width pins, and the `Habitat` trait | The growth simulator: marker-based space colonization, a light grid, vigor allocation and automatic shedding |
 | [`trees-mesh`](crates/trees-mesh) | Wireframe output: one line per internode | Swept generalized cylinders, leaf instances, levels of detail |
-| [`trees-viewer`](crates/trees-viewer) | A Bevy app that grows a stand-in test tree and shows its tube mesh on a ground disc, with an orbit camera and an egui side panel that edits the seed and every species parameter, regrowing the tree on each change. Click a branch to select it; width pins are marked in the view and listed in the panel | Editing pin widths, and brush, prune, bend and undo tools |
+| [`trees-viewer`](crates/trees-viewer) | A Bevy app that grows a stand-in test tree and shows its tube mesh on a ground disc, with an orbit camera and an egui side panel that edits the seed and every species parameter, regrowing the tree on each change. Right-click a branch for a menu that pins its width, re-solving the pipe model live; pins are marked in the view and listed in the panel | Brush, prune, bend and undo tools |
 
 ## Quick start
 

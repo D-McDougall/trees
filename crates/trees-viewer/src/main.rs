@@ -1,8 +1,8 @@
 //! Minimal Bevy viewer: grows a small test tree with a fixed rule (there is
 //! no growth simulator yet) and draws its tube mesh. A side panel edits the
 //! seed and species, regrowing the tree on every change, and lists the width
-//! pins. Click a branch to select it. Drag to orbit the camera, right-drag
-//! to pan and scroll to zoom.
+//! pins. Right-click a branch for a menu that pins its width. Drag to orbit
+//! the camera, right-drag to pan and scroll to zoom.
 //!
 //! Native: `cargo run -p trees-viewer`
 //! Web:    `cd crates/trees-viewer && trunk serve`, then open http://127.0.0.1:8080
@@ -21,7 +21,7 @@ use bevy_egui::{EguiGlobalSettings, EguiPlugin, PrimaryEguiContext};
 use trees_core::{Habitat, SlotIndex, Tree, TreeSpecies};
 use trees_mesh::{MeshOptions, MeshStyle, Topology, TreeMesh, TubeOptions, build_mesh};
 
-use branches::{ShownTree, WidthPins};
+use branches::{GrownTree, ShownTree, WidthPins};
 use editor::TreeParams;
 
 mod branches;
@@ -75,10 +75,6 @@ impl Habitat for Scene {
 /// Marks the entity showing the tree; [`show_tree`] replaces its mesh.
 #[derive(Component)]
 struct TreeView;
-
-/// The tree as grown from [`TreeParams`], before width pins.
-#[derive(Resource)]
-struct GrownTree(Tree);
 
 fn setup(
     mut commands: Commands,
