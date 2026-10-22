@@ -12,5 +12,5 @@ authors.workspace = true
 trees-core = { path = "../trees-core" }
 trees-mesh = { path = "../trees-mesh" }
 glam.workspace = true
-bevy = "0.20"
+bevy = { version = "0.20", features = ["pan_orbit_camera", "pan_orbit_gizmo"] }
 bevy_egui = "0.43"

@@ -1,5 +1,6 @@
 //! Minimal Bevy viewer: grows a small test tree with a fixed rule (there is
-//! no growth simulator yet) and draws its wireframe mesh, slowly turning.
+//! no growth simulator yet) and draws its wireframe mesh. Drag to orbit the
+//! camera, right-drag to pan and scroll to zoom.
 //!
 //! Native: `cargo run -p trees-viewer`
 //! Web:    `cd crates/trees-viewer && trunk serve`, then open http://127.0.0.1:8080
@@ -7,10 +8,13 @@
 use std::sync::Arc;
 
 use bevy::asset::RenderAssetUsages;
+use bevy::camera_controller::pan_orbit_camera::prelude::PanOrbitCamera;
 use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::prelude::*;
 use trees_core::{Habitat, Tree, TreeSpecies};
 use trees_mesh::{MeshOptions, Topology, TreeMesh, build_mesh};
+
+mod camera;
 
 fn main() {
     App::new()
@@ -25,14 +29,13 @@ fn main() {
             }),
             ..default()
         }))
+        .add_plugins(camera::CameraControlsPlugin)
         .add_systems(Startup, setup)
-        .add_systems(Update, spin)
         .run();
 }
 
-/// Marks the test tree so it can be animated.
-#[derive(Component)]
-struct Spin;
+/// Where the test tree is planted.
+const TREE_ROOT: Vec3 = Vec3::ZERO;
 
 /// The viewer's world as the growth logic sees it: everything below the
 /// ground plane is solid.
@@ -68,7 +71,6 @@ fn setup(
             unlit: true,
             ..default()
         })),
-        Spin,
     ));
     commands.spawn((
         PointLight {
@@ -77,16 +79,13 @@ fn setup(
         },
         Transform::from_xyz(4.0, 8.0, 4.0),
     ));
+    // Orbit about the tree's root.
+    let eye = TREE_ROOT + Vec3::new(-5.0, 5.0, 22.0);
     commands.spawn((
         Camera3d::default(),
-        Transform::from_xyz(-4.0, 6.0, 16.0).looking_at(Vec3::new(0.0, 4.0, 0.0), Vec3::Y),
+        PanOrbitCamera::default().with_initial_anchor_depth(eye.distance(TREE_ROOT).into()),
+        Transform::from_translation(eye).looking_at(TREE_ROOT, Vec3::Y),
     ));
-}
-
-fn spin(time: Res<Time>, mut query: Query<&mut Transform, With<Spin>>) {
-    for mut transform in &mut query {
-        transform.rotate_y(0.3 * time.delta_secs());
-    }
 }
 
 /// A stand-in until the growth simulator exists: every bud grows each step,
@@ -97,7 +96,7 @@ fn test_tree(habitat: &impl Habitat) -> Tree {
     const MAX_ORDER: u16 = 3;
     let species = Arc::new(TreeSpecies::default());
     let internode = species.architecture.internode_length;
-    let mut tree = Tree::new(species, 0, glam::Vec3::ZERO).expect("default species is valid");
+    let mut tree = Tree::new(species, 0, TREE_ROOT).expect("default species is valid");
     for _ in 0..STEPS {
         let buds: Vec<_> = tree
             .iter()
