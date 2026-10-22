@@ -186,3 +186,7 @@ subject to that distance limit. Sampling edits regrow from the same seed, then
 reapply width pins by branch path. Debug sampling markers show the raw grid
 (including occupied points) in perception AABBs around up to 16 live bud nodes,
 capped at 4,000 markers. This display-only toggle never changes growth.
+
+Species controls have detailed hover help with literature references. The same
+text is available in the [species parameter reference](docs/species-parameters.md),
+including implementation status and settings without editor widgets.

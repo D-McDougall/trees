@@ -30,9 +30,10 @@ mod camera;
 mod editor;
 mod leaf_debug;
 mod marker_debug;
+mod parameter_help;
 mod pick;
-mod units;
 mod ternary;
+mod units;
 
 fn main() {
     App::new()

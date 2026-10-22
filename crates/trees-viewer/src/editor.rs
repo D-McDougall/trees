@@ -19,7 +19,8 @@ use trees_core::{BranchingPattern, SlotIndex, Tree, TreeSpecies, VigorModel};
 
 use crate::branches::{BranchMenu, BranchPath, ShownTree, WidthPins, path_label};
 use crate::leaf_debug::LeafDebug;
-use crate::units::{LengthUnit, radius_label};
+use crate::parameter_help::{self, label as parameter_label};
+use crate::units::radius_label;
 
 /// What the tree is grown from. Changing it triggers a regrow.
 #[derive(Resource, Clone, PartialEq)]
@@ -116,9 +117,15 @@ fn panel(
         .show(&mut root, |ui| {
             egui::ScrollArea::vertical().show(ui, |ui| {
                 tree_ui(ui, &mut edited);
-                ui.checkbox(&mut markers_enabled, "Debug sampling markers");
+                parameter_help::attach(
+                    ui.checkbox(&mut markers_enabled, "Debug sampling markers"),
+                    "Debug sampling markers",
+                );
                 ui.weak("Raw grid near up to 16 live bud nodes; max 4,000 markers.");
-                ui.checkbox(&mut debug_enabled, "Debug leaf disks");
+                parameter_help::attach(
+                    ui.checkbox(&mut debug_enabled, "Debug leaf disks"),
+                    "Debug leaf disks",
+                );
                 if let Some(tree) = tree.as_ref() {
                     ui.label(format!("{} leaf placements", tree.0.leaves().len()));
                 }
@@ -167,7 +174,7 @@ fn panel(
 fn tree_ui(ui: &mut egui::Ui, params: &mut TreeParams) {
     ui.heading("Tree");
     egui::Grid::new("tree").num_columns(2).show(ui, |ui| {
-        ui.label("Seed");
+        parameter_label(ui, "Seed");
         ui.add(DragValue::new(&mut params.seed));
         ui.end_row();
 
@@ -180,7 +187,7 @@ fn tree_ui(ui: &mut egui::Ui, params: &mut TreeParams) {
         number(ui, "Point jitter", &mut params.jitter, 0.0..=0.49);
 
         // A mockup: presets are not wired up yet, so the menu is empty.
-        ui.label("Preset");
+        parameter_label(ui, "Preset");
         egui::ComboBox::from_id_salt("preset")
             .selected_text(&params.species.name)
             .show_ui(ui, |ui| {
@@ -216,11 +223,10 @@ fn pins_ui(
             let mut unpin = None;
             egui::Grid::new("width pins").num_columns(4).show(ui, |ui| {
                 ui.strong("Branch");
-                ui.strong("Radius (ft)");
+                parameter_help::attach(ui.strong("Radius (ft)"), "Width radius");
                 ui.strong("n");
                 ui.end_row();
                 for (i, (path, r)) in pins.0.iter().enumerate() {
-                    let feet = to_feet(*r);
                     let id = tree.node_at(path);
                     match id.and_then(|id| Some((id, tree.pin_exponent(id)?))) {
                         Some((id, n)) => {
@@ -252,7 +258,7 @@ fn pins_ui(
                             ui.weak("–");
                         }
                     }
-                    if ui.button("Unpin").clicked() {
+                    if parameter_help::attach(ui.button("Unpin"), "Unpin").clicked() {
                         unpin = Some(i);
                     }
                     ui.end_row();
@@ -272,64 +278,28 @@ fn species_ui(ui: &mut egui::Ui, s: &mut TreeSpecies, spacing: f32) {
         angle(ui, "Divergence φ", &mut a.divergence_angle, 0.0..=360.0);
         angle(ui, "Branching ψ", &mut a.branching_angle, 0.0..=180.0);
         angle(ui, "Deflection δ", &mut a.deflection_angle, 0.0..=180.0);
-        length(
-            ui,
-            "Internode length",
-            &mut a.internode_length,
-            0.01..=10.0,
-            LengthUnit::Feet,
-        );
+        length(ui, "Internode length", &mut a.internode_length, 0.01..=10.0);
     });
 
     section(ui, "Foliage", |ui| {
         let f = &mut s.foliage;
-        ui.label("Leaves enabled");
+        parameter_label(ui, "Leaves enabled");
         ui.checkbox(&mut f.enabled, "");
         ui.end_row();
         arrangement(ui, "Arrangement", "foliage arrangement", &mut f.arrangement);
-        length(
-            ui,
-            "Leaf spacing",
-            &mut f.spacing,
-            0.01..=10.0,
-            LengthUnit::Inches,
-        );
-        length(
-            ui,
-            "Maximum branch radius",
-            &mut f.max_radius,
-            0.0..=1.0,
-            LengthUnit::Inches,
-        );
+        length(ui, "Leaf spacing", &mut f.spacing, 0.01..=10.0);
+        length(ui, "Maximum branch radius", &mut f.max_radius, 0.0..=1.0);
         angle(ui, "Leaf divergence", &mut f.divergence_angle, 0.0..=360.0);
         angle(ui, "Attachment angle", &mut f.attachment_angle, 0.0..=180.0);
-        length(
-            ui,
-            "Petiole length",
-            &mut f.petiole_length,
-            0.0..=2.0,
-            LengthUnit::Inches,
-        );
-        length(
-            ui,
-            "Blade length",
-            &mut f.blade_length,
-            0.0..=2.0,
-            LengthUnit::Inches,
-        );
-        length(
-            ui,
-            "Blade width",
-            &mut f.blade_width,
-            0.0..=2.0,
-            LengthUnit::Inches,
-        );
+        length(ui, "Petiole length", &mut f.petiole_length, 0.0..=2.0);
+        length(ui, "Blade length", &mut f.blade_length, 0.0..=2.0);
+        length(ui, "Blade width", &mut f.blade_width, 0.0..=2.0);
     });
 
     section(ui, "Vigor", |ui| {
         ui.disable();
         let v = &mut s.vigor;
-        ui.label("Model");
+        parameter_label(ui, "Model");
         let priority = matches!(v.model, VigorModel::Priority { .. });
         egui::ComboBox::from_id_salt("vigor model")
             .selected_text(if priority {
@@ -398,12 +368,14 @@ fn species_ui(ui: &mut egui::Ui, s: &mut TreeSpecies, spacing: f32) {
     section(ui, "Direction weights", |ui| {
         let t = &mut s.tropism;
         let mut weights = [t.straightness, t.gravitropism, t.environment];
-        if ui
-            .add(crate::ternary::TernaryPicker::new(
+        if parameter_help::attach(
+            ui.add(crate::ternary::TernaryPicker::new(
                 &mut weights,
                 ["Straightness α", "Gravitropism β", "Environment γ"],
-            ))
-            .changed()
+            )),
+            "Direction weights",
+        )
+        .changed()
         {
             [t.straightness, t.gravitropism, t.environment] = weights;
         }
@@ -427,7 +399,6 @@ fn species_ui(ui: &mut egui::Ui, s: &mut TreeSpecies, spacing: f32) {
             "Occupancy radius ρ",
             &mut c.occupancy_radius,
             0.01..=c.perception_distance - 0.01,
-            LengthUnit::Feet,
         );
         angle(
             ui,
@@ -439,8 +410,7 @@ fn species_ui(ui: &mut egui::Ui, s: &mut TreeSpecies, spacing: f32) {
             ui,
             "Perception distance r",
             &mut c.perception_distance,
-            c.occupancy_radius + 0.01..=50.0,
-            LengthUnit::Feet,
+            c.occupancy_radius + 0.01..=(4.0 * spacing).min(50.0),
         );
         ui.disable();
         number(
@@ -463,7 +433,7 @@ fn species_ui(ui: &mut egui::Ui, s: &mut TreeSpecies, spacing: f32) {
     section(ui, "Shedding", |ui| {
         ui.disable();
         let sh = &mut s.shedding;
-        ui.label("Enabled");
+        parameter_label(ui, "Enabled");
         ui.checkbox(&mut sh.enabled, "");
         ui.end_row();
         number(
@@ -476,20 +446,14 @@ fn species_ui(ui: &mut egui::Ui, s: &mut TreeSpecies, spacing: f32) {
 
     section(ui, "Thickness", |ui| {
         let th = &mut s.thickness;
-        length(
-            ui,
-            "Tip radius",
-            &mut th.tip_radius,
-            0.001..=1.0,
-            LengthUnit::Inches,
-        );
+        length(ui, "Tip radius", &mut th.tip_radius, 0.001..=1.0);
         number(ui, "Pipe exponent n", &mut th.pipe_exponent, 2.0..=3.0);
     });
 }
 
 /// Architecture and foliage share the choices, but keep independent widget IDs.
 fn arrangement(ui: &mut egui::Ui, label: &str, id: &str, value: &mut BranchingPattern) {
-    ui.label(label);
+    parameter_label(ui, label);
     egui::ComboBox::from_id_salt(id)
         .selected_text(format!("{value:?}"))
         .show_ui(ui, |ui| {
@@ -510,7 +474,7 @@ fn section(ui: &mut egui::Ui, title: &str, rows: impl FnOnce(&mut egui::Ui)) {
 }
 
 fn number(ui: &mut egui::Ui, label: &str, value: &mut f32, range: RangeInclusive<f32>) {
-    ui.label(label);
+    parameter_label(ui, label);
     let speed = (range.end() - range.start()) / 200.0;
     ui.add(DragValue::new(value).range(range).speed(speed));
     ui.end_row();
@@ -528,7 +492,7 @@ pub fn to_metres(feet: f32) -> f32 {
 }
 
 fn length(ui: &mut egui::Ui, label: &str, metres: &mut f32, range: RangeInclusive<f32>) {
-    ui.label(label);
+    parameter_help::length_label(ui, label);
     let mut feet = to_feet(*metres);
     let feet_range = to_feet(*range.start())..=to_feet(*range.end());
     let speed = (feet_range.end() - feet_range.start()) / 200.0;
@@ -547,14 +511,14 @@ fn length(ui: &mut egui::Ui, label: &str, metres: &mut f32, range: RangeInclusiv
 }
 
 fn count(ui: &mut egui::Ui, label: &str, value: &mut u32, range: RangeInclusive<u32>) {
-    ui.label(label);
+    parameter_label(ui, label);
     ui.add(DragValue::new(value).range(range));
     ui.end_row();
 }
 
 /// An angle stored in radians, edited in degrees.
 fn angle(ui: &mut egui::Ui, label: &str, radians: &mut f32, degrees: RangeInclusive<f32>) {
-    ui.label(label);
+    parameter_label(ui, label);
     // 180f32.to_radians() rounds to just above π, which validation rejects.
     let to_radians = |d: f32| (d.to_radians()).min(if d <= 180.0 { PI } else { TAU });
     let mut value = radians.to_degrees();
@@ -572,26 +536,43 @@ fn angle(ui: &mut egui::Ui, label: &str, radians: &mut f32, degrees: RangeInclus
     ui.end_row();
 }
 
-/// Convert only at the UI boundary, and preserve the stored value on redraw.
-fn length(
-    ui: &mut egui::Ui,
-    label: &str,
-    value: &mut f32,
-    range: RangeInclusive<f32>,
-    unit: LengthUnit,
-) {
-    ui.label(label);
-    let mut shown = unit.from_world(*value);
-    let shown_range = unit.from_world(*range.start())..=unit.from_world(*range.end());
-    let speed = (shown_range.end() - shown_range.start()) / 200.0;
-    let response = ui.add(
-        DragValue::new(&mut shown)
-            .range(shown_range)
-            .speed(speed)
-            .suffix(unit.suffix()),
-    );
-    if response.changed() {
-        *value = unit.to_world(shown).clamp(*range.start(), *range.end());
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_parameter_label_resolves_and_idle_frames_preserve_parameters() {
+        for priority in [false, true] {
+            let ctx = egui::Context::default();
+            let mut params = TreeParams::default();
+            if priority {
+                params.species.vigor.model = VigorModel::Priority {
+                    w_max: 1.0,
+                    w_min: 0.1,
+                    top_fraction: 0.5,
+                };
+            }
+            let before = params.clone();
+            for _ in 0..3 {
+                let output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            egui::vec2(650.0, 5000.0),
+                        )),
+                        ..Default::default()
+                    },
+                    |ctx| {
+                        egui::CentralPanel::default().show(ctx, |ui| {
+                            tree_ui(ui, &mut params);
+                            species_ui(ui, &mut params.species, params.point_spacing);
+                        });
+                    },
+                );
+                output.drop_without_applying_deltas();
+                assert!(params == before, "idle UI must not trigger regrowth");
+                params.species.validate().unwrap();
+            }
+        }
     }
-    ui.end_row();
 }

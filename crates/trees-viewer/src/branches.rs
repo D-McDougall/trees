@@ -22,8 +22,9 @@ use trees_core::{BudFate, NodeId, SlotIndex, Tree};
 use trees_mesh::base_ring_radius;
 
 use crate::editor::{PanelWidth, pointer_over_panel, to_feet, to_metres};
+use crate::parameter_help;
 use crate::pick::pick;
-use crate::units::{LengthUnit, radius_label};
+use crate::units::radius_label;
 
 /// A branch, named by the slots leading to it from the root.
 pub type BranchPath = Vec<SlotIndex>;
@@ -256,10 +257,10 @@ fn menu_ui(ui: &mut egui::Ui, tree: &Tree, grown: &Tree, path: &[SlotIndex], pin
             .show(ui, |ui| {
                 let tip = tree.species().thickness.tip_radius;
                 let max = (grown.node(grown.root()).radius * MAX_WIDTH_FACTOR).max(tip * 2.0);
-                let unit = LengthUnit::Inches;
-                let mut r = unit.from_world(pin.unwrap_or(node.radius));
-                let (tip, max) = (unit.from_world(tip), unit.from_world(max));
+                let mut r = to_feet(pin.unwrap_or(node.radius));
+                let (tip, max) = (to_feet(tip), to_feet(max));
                 let speed = r * 0.01;
+                parameter_help::attach(ui.label("Radius (ft)"), "Width radius");
                 ui.horizontal(|ui| {
                     let slider = ui.add(
                         egui::Slider::new(&mut r, tip..=max)
@@ -271,14 +272,14 @@ fn menu_ui(ui: &mut egui::Ui, tree: &Tree, grown: &Tree, path: &[SlotIndex], pin
                             .range(tip..=max)
                             .speed(speed)
                             .max_decimals(4)
-                            .suffix(unit.suffix()),
+                            .suffix(" ft"),
                     );
                     if slider.changed() || typed.changed() {
-                        pins.set(path, unit.to_world(r));
+                        pins.set(path, to_metres(r).clamp(to_metres(tip), to_metres(max)));
                     }
                 });
                 let mut pinned = pin.is_some();
-                if ui.checkbox(&mut pinned, "Pinned").changed() {
+                if parameter_help::attach(ui.checkbox(&mut pinned, "Pinned"), "Pinned").changed() {
                     if pinned {
                         pins.set(path, node.radius);
                     } else {

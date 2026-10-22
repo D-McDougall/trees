@@ -95,7 +95,6 @@ impl egui::Widget for TernaryPicker<'_> {
             ui.visuals().text_color(),
         );
         response
-            .on_hover_text("Click or drag to blend the three corner values. Values sum to 100%.")
     }
 }
 
