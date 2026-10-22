@@ -20,9 +20,9 @@ simulator is not written yet.
 
 | Crate | What works today | Planned |
 | --- | --- | --- |
-| [`trees-core`](crates/trees-core) | The tree graph (an arena of internodes whose empty child slots are buds), species parameters with validation and two presets, growing, pruning and shedding internodes, tip-to-base folds, pipe-model branch radii with width pins, and the `Habitat` trait | The growth simulator: marker-based space colonization, a light grid, vigor allocation and automatic shedding |
+| [`trees-core`](crates/trees-core) | The tree graph (an arena of internodes whose empty child slots are buds), species parameters with validation and two presets, growing, pruning and shedding internodes, tip-to-base folds, pipe-model branch radii with width pins, stored species-dependent leaf attachments and initial frames, and the `Habitat` trait | The growth simulator: marker-based space colonization, a light grid, vigor allocation and automatic shedding |
 | [`trees-mesh`](crates/trees-mesh) | Wireframe output: one line per internode | Swept generalized cylinders, leaf instances, levels of detail |
-| [`trees-viewer`](crates/trees-viewer) | A Bevy app that grows a stand-in test tree and shows its tube mesh on a ground disc, with an orbit camera and an egui side panel that edits the seed and every species parameter, regrowing the tree on each change. Right-click a branch for a menu that pins its width, re-solving the pipe model live; pins are marked in the view and listed in the panel | Brush, prune, bend and undo tools |
+| [`trees-viewer`](crates/trees-viewer) | A Bevy app that grows a stand-in test tree and shows its tube mesh on a ground disc, with an orbit camera and an egui side panel that edits the seed and species growth parameters, regrowing the tree on each change. Right-click a branch for a menu that pins its width, re-solving the pipe model live; pins are marked in the view and listed in the panel | Brush, prune, bend and undo tools |
 
 ## Quick start
 
@@ -106,6 +106,10 @@ meshes, never by patching them. Simulation and rendering run on separate
 threads, and the renderer reads an immutable snapshot. Every randomized choice
 is seeded and hashed by position, so the same species, seed and edit history
 always produce the same tree.
+
+Foliage placement follows Longay’s thin-branch rule independently of buds. The core
+stores attachments and initial leaf frames; temporary four-inch debug disks visualize them in the viewer. The Foliage panel
+edits placement parameters; textured leaf geometry and uploads remain planned. See the [foliage contract](docs/foliage.md) for parameters and lifecycle.
 
 The full design, including the data structures, the growth loop, the
 interaction tools and the geometry passes, is in

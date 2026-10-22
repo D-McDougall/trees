@@ -169,6 +169,53 @@ pub struct Thickness {
     pub tip_radius: f32,
 }
 
+/// Species-specific foliage, independent of branch buds (Longay 2014 C.1.1).
+///
+/// Distances are world units and angles are radians. Defaults are illustrative
+/// broadleaf settings, not measurements of a named species. Petiole elasticity
+/// and blade reorientation belong to a later geometry stage.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Foliage {
+    /// Whether this species produces leaves.
+    pub enabled: bool,
+    /// Distance between attachment stations along an axis; strictly positive.
+    pub spacing: f32,
+    /// Leaves attach only where the interpolated branch radius is strictly below this.
+    /// Zero disables attachments. This is a radius, not a diameter.
+    pub max_radius: f32,
+    /// One leaf or an opposite pair at each station, independent of branch pattern.
+    pub arrangement: BranchingPattern,
+    /// Rotation between attachment stations, independent of branch divergence.
+    pub divergence_angle: f32,
+    /// Initial petiole angle from the supporting axis, in [0, π].
+    pub attachment_angle: f32,
+    /// Blade length from base to tip; zero suppresses leaves.
+    pub blade_length: f32,
+    /// Blade width; zero suppresses leaves.
+    pub blade_width: f32,
+    /// Straight initial petiole length, non-negative.
+    pub petiole_length: f32,
+    /// Engine-neutral appearance key. Image bytes and renderer handles live in the viewer.
+    pub appearance: String,
+}
+
+impl Default for Foliage {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            spacing: 0.25,
+            max_radius: 0.06,
+            arrangement: BranchingPattern::Alternate,
+            divergence_angle: GOLDEN_ANGLE,
+            attachment_angle: 60f32.to_radians(),
+            blade_length: 0.3,
+            blade_width: 0.15,
+            petiole_length: 0.08,
+            appearance: "generic-broadleaf".into(),
+        }
+    }
+}
+
 /// Everything that makes one kind of tree grow differently from another.
 ///
 /// Immutable once a tree is created. Build one by starting from a preset
@@ -194,6 +241,8 @@ pub struct TreeSpecies {
     pub shedding: Shedding,
     /// Pipe-model branch radii.
     pub thickness: Thickness,
+    /// Leaf placement and initial blade dimensions.
+    pub foliage: Foliage,
 }
 
 /// The golden angle, 360°·(1 − 1/φ), in radians.
@@ -249,6 +298,7 @@ impl Default for TreeSpecies {
                 enabled: true,
                 light_per_internode_threshold: 0.05,
             },
+            foliage: Foliage::default(),
             thickness: Thickness {
                 pipe_exponent: 2.5,
                 tip_radius: 0.02,
@@ -264,6 +314,8 @@ impl TreeSpecies {
     pub fn conifer() -> Self {
         let mut s = TreeSpecies::default();
         s.name = "Generic conifer".to_owned();
+        // Needle arrangements and templates are a later feature.
+        s.foliage.enabled = false;
         s.architecture.branching_angle = 70f32.to_radians();
         s.architecture.deflection_angle = 0.0;
         s.vigor.apical_control = 0.58;
@@ -376,6 +428,14 @@ impl TreeSpecies {
         let n = self.thickness.pipe_exponent;
         check("thickness.pipe_exponent", n, (2.0..=3.0).contains(&n))?;
         positive("thickness.tip_radius", self.thickness.tip_radius)?;
+        let f = &self.foliage;
+        positive("foliage.spacing", f.spacing)?;
+        non_negative("foliage.max_radius", f.max_radius)?;
+        check("foliage.divergence_angle", f.divergence_angle, true)?;
+        angle("foliage.attachment_angle", f.attachment_angle)?;
+        non_negative("foliage.blade_length", f.blade_length)?;
+        non_negative("foliage.blade_width", f.blade_width)?;
+        non_negative("foliage.petiole_length", f.petiole_length)?;
         Ok(())
     }
 }
@@ -446,6 +506,21 @@ mod tests {
     fn validation_enforces_parameter_ranges() {
         use std::f32::consts::PI;
         let bad: &[fn(&mut TreeSpecies)] = &[
+            |s| s.foliage.spacing = 0.0,
+            |s| s.foliage.spacing = -1.0,
+            |s| s.foliage.spacing = f32::NAN,
+            |s| s.foliage.spacing = f32::INFINITY,
+            |s| s.foliage.max_radius = -0.1,
+            |s| s.foliage.max_radius = f32::INFINITY,
+            |s| s.foliage.divergence_angle = f32::NAN,
+            |s| s.foliage.attachment_angle = PI + 0.1,
+            |s| s.foliage.attachment_angle = -0.1,
+            |s| s.foliage.blade_length = -0.1,
+            |s| s.foliage.blade_length = f32::NAN,
+            |s| s.foliage.blade_width = -0.1,
+            |s| s.foliage.blade_width = f32::INFINITY,
+            |s| s.foliage.petiole_length = -0.1,
+            |s| s.foliage.petiole_length = f32::NAN,
             |s| s.architecture.divergence_angle = f32::INFINITY,
             |s| s.architecture.branching_angle = -0.1,
             |s| s.architecture.branching_angle = PI + 0.1,
@@ -513,6 +588,27 @@ mod tests {
             top_fraction: 1.0,
         };
         assert_eq!(s.validate(), Ok(()));
+    }
+
+    #[test]
+    fn foliage_range_endpoints_and_disabled_validation() {
+        let mut s = TreeSpecies::default();
+        s.foliage.max_radius = 0.0;
+        s.foliage.blade_width = 0.0;
+        s.foliage.blade_length = 0.0;
+        s.foliage.petiole_length = 0.0;
+        s.foliage.attachment_angle = std::f32::consts::PI;
+        s.foliage.divergence_angle = -1.0;
+        assert_eq!(s.validate(), Ok(()));
+        s.foliage.enabled = false;
+        s.foliage.spacing = 0.0;
+        assert!(matches!(
+            s.validate(),
+            Err(SpeciesError::OutOfRange {
+                field: "foliage.spacing",
+                ..
+            })
+        ));
     }
 
     #[test]

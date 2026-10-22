@@ -15,6 +15,7 @@ use std::sync::Arc;
 
 use glam::Vec3;
 
+use crate::foliage::{Leaf, place_leaves};
 use crate::habitat::Habitat;
 use crate::node::{NodeId, Slot, SlotIndex, TreeNode};
 use crate::species::{SpeciesError, TreeSpecies};
@@ -35,6 +36,7 @@ pub struct Tree {
     /// retired, not reused. A shed branch's own node stays, as a stump.
     nodes: Vec<Option<TreeNode>>,
     live: usize,
+    leaves: Vec<Leaf>,
     /// The user's width pins: absolute radii that [`Tree::update_radii`]
     /// holds exactly. Only live, non-stump nodes are pinned.
     pins: BTreeMap<NodeId, f32>,
@@ -56,14 +58,32 @@ impl Tree {
             0,
             0,
         );
-        Ok(Tree {
+        let mut tree = Tree {
             species,
             seed,
             step: 0,
             nodes: vec![Some(root)],
             live: 1,
+            leaves: Vec::new(),
             pins: BTreeMap::new(),
-        })
+        };
+        tree.update_leaves();
+        Ok(tree)
+    }
+
+    /// Stored leaf attachments and initial frames, in axis/station/pair order.
+    /// Refreshed by growth, prune, shed and radius updates. Direct edits through
+    /// [`Tree::get_mut`] or [`Tree::node_mut`] require [`Tree::update_radii`]
+    /// (or [`Tree::update_leaves`] if radii are already current).
+    pub fn leaves(&self) -> &[Leaf] {
+        &self.leaves
+    }
+
+    /// Rebuilds stored foliage from the current skeleton and radii, without
+    /// changing buds or branches. Longay 2014 C.1.1 supplies the thin-branch
+    /// rule; distance sampling and stable identities are project conventions.
+    pub fn update_leaves(&mut self) {
+        self.leaves = place_leaves(self);
     }
 
     /// The species every node of this tree grows by.
@@ -107,6 +127,7 @@ impl Tree {
     }
 
     /// Mutable access to the node with `id`, or `None` if it was pruned or shed.
+    /// After geometry edits, call [`Tree::update_radii`] to refresh foliage too.
     pub fn get_mut(&mut self, id: NodeId) -> Option<&mut TreeNode> {
         self.nodes.get_mut(id.index())?.as_mut()
     }
@@ -117,6 +138,7 @@ impl Tree {
     }
 
     /// Mutable access to a live node; panics like [`Tree::node`].
+    /// After geometry edits, call [`Tree::update_radii`] to refresh foliage too.
     pub fn node_mut(&mut self, id: NodeId) -> &mut TreeNode {
         self.get_mut(id).expect("node was pruned")
     }
@@ -203,6 +225,7 @@ impl Tree {
         );
         self.nodes.push(Some(child));
         self.live += 1;
+        self.update_leaves();
         Some(id)
     }
 
@@ -224,7 +247,9 @@ impl Tree {
                 *slot = Slot::Empty;
             }
         }
-        self.remove_subtrees(vec![id])
+        let removed = self.remove_subtrees(vec![id]);
+        self.update_leaves();
+        removed
     }
 
     /// Sheds the branch at `id` (self-pruning), leaving node `id` as a stump.
@@ -269,7 +294,9 @@ impl Tree {
         node.internode_count = 1;
         node.stump = true;
         self.pins.remove(&id);
-        self.remove_subtrees(children)
+        let removed = self.remove_subtrees(children);
+        self.update_leaves();
+        removed
     }
 
     /// Pins node `id` to radius `r` (Longay 2014 §5.3.2), replacing any pin
@@ -390,6 +417,7 @@ impl Tree {
                 node.radius = r;
             }
         }
+        self.update_leaves();
     }
 
     /// Radii of the boundary elements of the subtree below the pinned node

@@ -27,6 +27,7 @@ use editor::TreeParams;
 mod branches;
 mod camera;
 mod editor;
+mod leaf_debug;
 mod pick;
 
 fn main() {
@@ -48,10 +49,16 @@ fn main() {
             editor::EditorPlugin,
             branches::BranchesPlugin,
         ))
-        .add_systems(Startup, setup)
+        .init_resource::<leaf_debug::LeafDebug>()
+        .add_systems(Startup, (setup, leaf_debug::setup))
         .add_systems(
             Update,
-            (regrow.run_if(resource_changed::<TreeParams>), show_tree).chain(),
+            (
+                regrow.run_if(resource_changed::<TreeParams>),
+                show_tree,
+                leaf_debug::show_leaf_debug,
+            )
+                .chain(),
         )
         .run();
 }
@@ -253,4 +260,29 @@ fn to_bevy_mesh(mesh: TreeMesh) -> Mesh {
         bevy_mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, mesh.uvs);
     }
     bevy_mesh
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn foliage_controls_change_placements_without_changing_branches() {
+        let species = TreeSpecies::default();
+        let original = test_tree(&trees_core::OpenAir, species.clone(), 42).unwrap();
+        let mut edited = species;
+        edited.foliage.spacing *= 0.5;
+        edited.foliage.arrangement = trees_core::BranchingPattern::Opposite;
+        edited.foliage.attachment_angle = 0.5;
+        edited.foliage.petiole_length = 0.2;
+        let changed = test_tree(&trees_core::OpenAir, edited, 42).unwrap();
+        assert!(changed.leaves().len() > original.leaves().len());
+        assert_eq!(original.len(), changed.len());
+        for ((id_a, a), (id_b, b)) in original.iter().zip(changed.iter()) {
+            assert_eq!(id_a, id_b);
+            assert_eq!(a.position, b.position);
+            assert_eq!(a.heading, b.heading);
+            assert_eq!(a.radius, b.radius);
+        }
+    }
 }

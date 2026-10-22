@@ -1,4 +1,4 @@
-//! Side panel for editing the seed and every species parameter, and for
+//! Side panel for editing the seed and species growth/foliage parameters, and for
 //! listing the width pins. Any parameter change regrows the whole tree from
 //! scratch.
 //!
@@ -18,6 +18,7 @@ use bevy_egui::{EguiContexts, EguiPrimaryContextPass};
 use trees_core::{BranchingPattern, SlotIndex, Tree, TreeSpecies, VigorModel};
 
 use crate::branches::{BranchMenu, BranchPath, ShownTree, WidthPins, path_label};
+use crate::leaf_debug::LeafDebug;
 
 /// What the tree is grown from. Changing it triggers a regrow.
 #[derive(Resource, Clone, Default, PartialEq)]
@@ -58,6 +59,7 @@ impl Plugin for EditorPlugin {
 fn panel(
     mut contexts: EguiContexts,
     mut params: ResMut<TreeParams>,
+    mut leaf_debug: ResMut<LeafDebug>,
     mut pins: ResMut<WidthPins>,
     tree: Option<Res<ShownTree>>,
     mut menu: ResMut<BranchMenu>,
@@ -70,6 +72,7 @@ fn panel(
     // panel does not count as a change.
     let mut edited = params.clone();
     let mut edited_pins = pins.clone();
+    let mut debug_enabled = leaf_debug.enabled;
     let mut root = egui::Ui::new(
         ctx.clone(),
         "viewport".into(),
@@ -83,6 +86,11 @@ fn panel(
         .show(&mut root, |ui| {
             egui::ScrollArea::vertical().show(ui, |ui| {
                 tree_ui(ui, &mut edited);
+                ui.checkbox(&mut debug_enabled, "Debug leaf disks");
+                ui.weak("4-inch disks at blade centers (1 unit = 1 metre).");
+                if let Some(tree) = tree.as_ref() {
+                    ui.label(format!("{} leaf placements", tree.0.leaves().len()));
+                }
                 let tree = tree.as_deref().map(|t| &t.0);
                 let open = menu.target.as_deref();
                 if let Some(path) = pins_ui(ui, tree, open, &mut edited_pins) {
@@ -99,6 +107,9 @@ fn panel(
         .response
         .rect
         .width();
+    if debug_enabled != leaf_debug.enabled {
+        leaf_debug.enabled = debug_enabled;
+    }
     panel_width.0 = width;
     if edited != *params {
         *params = edited;
@@ -223,6 +234,29 @@ fn species_ui(ui: &mut egui::Ui, s: &mut TreeSpecies) {
         angle(ui, "Branching ψ", &mut a.branching_angle, 0.0..=180.0);
         angle(ui, "Deflection δ", &mut a.deflection_angle, 0.0..=180.0);
         number(ui, "Internode length", &mut a.internode_length, 0.01..=10.0);
+    });
+
+    section(ui, "Foliage", |ui| {
+        let f = &mut s.foliage;
+        ui.label("Leaves enabled");
+        ui.checkbox(&mut f.enabled, "");
+        ui.end_row();
+        ui.label("Arrangement");
+        egui::ComboBox::from_id_salt("foliage arrangement")
+            .selected_text(format!("{:?}", f.arrangement))
+            .show_ui(ui, |ui| {
+                for pattern in [BranchingPattern::Alternate, BranchingPattern::Opposite] {
+                    ui.selectable_value(&mut f.arrangement, pattern, format!("{pattern:?}"));
+                }
+            });
+        ui.end_row();
+        number(ui, "Leaf spacing", &mut f.spacing, 0.01..=10.0);
+        number(ui, "Maximum branch radius", &mut f.max_radius, 0.0..=1.0);
+        angle(ui, "Leaf divergence", &mut f.divergence_angle, 0.0..=360.0);
+        angle(ui, "Attachment angle", &mut f.attachment_angle, 0.0..=180.0);
+        number(ui, "Petiole length", &mut f.petiole_length, 0.0..=2.0);
+        number(ui, "Blade length", &mut f.blade_length, 0.0..=2.0);
+        number(ui, "Blade width", &mut f.blade_width, 0.0..=2.0);
     });
 
     section(ui, "Vigor", |ui| {
