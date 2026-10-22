@@ -3,8 +3,8 @@
 //! scratch.
 //!
 //! Every input is limited to the range [`TreeSpecies::validate`] accepts, so
-//! the panel cannot produce an invalid species. Parameters the stand-in test
-//! tree does not read yet are shown grayed out and cannot be edited.
+//! the panel cannot produce an invalid species. Parameters not simulated yet
+//! are shown grayed out, except the direction blend preview.
 
 use std::f32::consts::{PI, TAU};
 use std::ops::RangeInclusive;
@@ -22,12 +22,39 @@ use crate::leaf_debug::LeafDebug;
 use crate::units::{LengthUnit, radius_label};
 
 /// What the tree is grown from. Changing it triggers a regrow.
-#[derive(Resource, Clone, Default, PartialEq)]
+#[derive(Resource, Clone, PartialEq)]
 pub struct TreeParams {
     /// Seed for the tree's randomness.
     pub seed: u64,
+    /// Sampling cell width in world units (metres).
+    pub point_spacing: f32,
+    /// Displacement as a fraction of spacing, strictly below one half.
+    pub jitter: f32,
     /// Species being edited.
     pub species: TreeSpecies,
+}
+
+impl Default for TreeParams {
+    fn default() -> Self {
+        Self {
+            seed: 0,
+            point_spacing: 1.25,
+            jitter: 0.25,
+            species: TreeSpecies::default(),
+        }
+    }
+}
+
+impl TreeParams {
+    pub fn sampling(
+        &self,
+    ) -> Result<trees_core::SamplingConfig, trees_core::RestrictedJitterError> {
+        trees_core::RestrictedJitter::new(self.point_spacing, self.jitter, self.seed)?;
+        Ok(trees_core::SamplingConfig {
+            cell_size: self.point_spacing,
+            jitter: self.jitter,
+        })
+    }
 }
 
 /// Current width of the panel, in logical pixels. The panel is drawn on
@@ -61,6 +88,7 @@ fn panel(
     mut contexts: EguiContexts,
     mut params: ResMut<TreeParams>,
     mut leaf_debug: ResMut<LeafDebug>,
+    mut markers: ResMut<crate::marker_debug::MarkerDebug>,
     mut pins: ResMut<WidthPins>,
     tree: Option<Res<ShownTree>>,
     mut menu: ResMut<BranchMenu>,
@@ -74,6 +102,7 @@ fn panel(
     let mut edited = params.clone();
     let mut edited_pins = pins.clone();
     let mut debug_enabled = leaf_debug.enabled;
+    let mut markers_enabled = markers.enabled;
     let mut root = egui::Ui::new(
         ctx.clone(),
         "viewport".into(),
@@ -87,6 +116,8 @@ fn panel(
         .show(&mut root, |ui| {
             egui::ScrollArea::vertical().show(ui, |ui| {
                 tree_ui(ui, &mut edited);
+                ui.checkbox(&mut markers_enabled, "Debug sampling markers");
+                ui.weak("Raw grid near up to 16 live bud nodes; max 4,000 markers.");
                 ui.checkbox(&mut debug_enabled, "Debug leaf disks");
                 if let Some(tree) = tree.as_ref() {
                     ui.label(format!("{} leaf placements", tree.0.leaves().len()));
@@ -101,7 +132,7 @@ fn panel(
                     }
                 }
                 ui.separator();
-                species_ui(ui, &mut edited.species);
+                species_ui(ui, &mut edited.species, edited.point_spacing);
             });
         })
         .response
@@ -109,6 +140,9 @@ fn panel(
         .width();
     if debug_enabled != leaf_debug.enabled {
         leaf_debug.enabled = debug_enabled;
+    }
+    if markers_enabled != markers.enabled {
+        markers.enabled = markers_enabled;
     }
     panel_width.0 = width;
     if edited != *params {
@@ -137,6 +171,14 @@ fn tree_ui(ui: &mut egui::Ui, params: &mut TreeParams) {
         ui.add(DragValue::new(&mut params.seed));
         ui.end_row();
 
+        length(
+            ui,
+            "Point spacing",
+            &mut params.point_spacing,
+            (params.species.space.perception_distance / 4.0).max(0.25)..=5.0,
+        );
+        number(ui, "Point jitter", &mut params.jitter, 0.0..=0.49);
+
         // A mockup: presets are not wired up yet, so the menu is empty.
         ui.label("Preset");
         egui::ComboBox::from_id_salt("preset")
@@ -146,7 +188,8 @@ fn tree_ui(ui: &mut egui::Ui, params: &mut TreeParams) {
             });
         ui.end_row();
     });
-    ui.weak("Grayed-out parameters have no effect until the growth simulator exists.");
+    ui.weak("Grayed-out parameters are not simulated yet.");
+    ui.weak("Preview: up to 6 steps / 256 nodes. Perception ≤ 4 × point spacing.");
 }
 
 /// The list of width pins. A pin is grayed out while its branch is missing
@@ -173,10 +216,11 @@ fn pins_ui(
             let mut unpin = None;
             egui::Grid::new("width pins").num_columns(4).show(ui, |ui| {
                 ui.strong("Branch");
-                ui.strong("Radius");
+                ui.strong("Radius (ft)");
                 ui.strong("n");
                 ui.end_row();
                 for (i, (path, r)) in pins.0.iter().enumerate() {
+                    let feet = to_feet(*r);
                     let id = tree.node_at(path);
                     match id.and_then(|id| Some((id, tree.pin_exponent(id)?))) {
                         Some((id, n)) => {
@@ -221,7 +265,7 @@ fn pins_ui(
     clicked
 }
 
-fn species_ui(ui: &mut egui::Ui, s: &mut TreeSpecies) {
+fn species_ui(ui: &mut egui::Ui, s: &mut TreeSpecies, spacing: f32) {
     section(ui, "Architecture", |ui| {
         let a = &mut s.architecture;
         arrangement(ui, "Branching", "branching", &mut a.branching);
@@ -330,7 +374,12 @@ fn species_ui(ui: &mut egui::Ui, s: &mut TreeSpecies) {
             &mut v.activation_threshold,
             0.0..=10.0,
         );
-        count(ui, "Max shoot length", &mut v.max_shoot_length, 1..=20);
+        count(
+            ui,
+            "Max shoot length (internodes)",
+            &mut v.max_shoot_length,
+            1..=20,
+        );
     });
 
     section(ui, "Tropism", |ui| {
@@ -343,11 +392,24 @@ fn species_ui(ui: &mut egui::Ui, s: &mut TreeSpecies) {
             0.0..=180.0,
         );
         angle(ui, "Main set-point", &mut t.main_set_point, 0.0..=180.0);
-        number(ui, "Straightness α", &mut t.straightness, 0.0..=1.0);
-        number(ui, "Gravitropism β", &mut t.gravitropism, 0.0..=1.0);
-        // These must sum to 1; a triangle picker will replace them, so
-        // they stay read-only until then.
-        number(ui, "Environment γ", &mut t.environment, 0.0..=1.0);
+        // The weights can be edited together even while tropism simulation
+        // is pending. Use a fresh scope because the angle rows are disabled.
+    });
+    section(ui, "Direction weights", |ui| {
+        let t = &mut s.tropism;
+        let mut weights = [t.straightness, t.gravitropism, t.environment];
+        if ui
+            .add(crate::ternary::TernaryPicker::new(
+                &mut weights,
+                ["Straightness α", "Gravitropism β", "Environment γ"],
+            ))
+            .changed()
+        {
+            [t.straightness, t.gravitropism, t.environment] = weights;
+        }
+        ui.end_row();
+        ui.weak("Direction weights are not simulated yet.");
+        ui.end_row();
     });
 
     section(ui, "Gravimorphism", |ui| {
@@ -359,7 +421,6 @@ fn species_ui(ui: &mut egui::Ui, s: &mut TreeSpecies) {
     });
 
     section(ui, "Space colonization", |ui| {
-        ui.disable();
         let c = &mut s.space;
         length(
             ui,
@@ -381,6 +442,7 @@ fn species_ui(ui: &mut egui::Ui, s: &mut TreeSpecies) {
             c.occupancy_radius + 0.01..=50.0,
             LengthUnit::Feet,
         );
+        ui.disable();
         number(
             ui,
             "Markers per vigor",
@@ -451,6 +513,36 @@ fn number(ui: &mut egui::Ui, label: &str, value: &mut f32, range: RangeInclusive
     ui.label(label);
     let speed = (range.end() - range.start()) / 200.0;
     ui.add(DragValue::new(value).range(range).speed(speed));
+    ui.end_row();
+}
+
+/// Internal lengths remain metres; only UI values use feet.
+pub const METRES_PER_FOOT: f32 = 0.3048;
+
+pub fn to_feet(metres: f32) -> f32 {
+    metres / METRES_PER_FOOT
+}
+
+pub fn to_metres(feet: f32) -> f32 {
+    feet * METRES_PER_FOOT
+}
+
+fn length(ui: &mut egui::Ui, label: &str, metres: &mut f32, range: RangeInclusive<f32>) {
+    ui.label(label);
+    let mut feet = to_feet(*metres);
+    let feet_range = to_feet(*range.start())..=to_feet(*range.end());
+    let speed = (feet_range.end() - feet_range.start()) / 200.0;
+    if ui
+        .add(
+            DragValue::new(&mut feet)
+                .range(feet_range)
+                .speed(speed)
+                .suffix(" ft"),
+        )
+        .changed()
+    {
+        *metres = to_metres(feet).clamp(*range.start(), *range.end());
+    }
     ui.end_row();
 }
 

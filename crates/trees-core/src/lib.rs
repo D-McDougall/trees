@@ -17,16 +17,20 @@
 #![warn(missing_docs)]
 
 pub mod foliage;
+pub mod growth;
 pub mod habitat;
 pub mod node;
 pub mod petiole;
+pub mod restricted_jitter;
 pub mod species;
 pub mod tree;
 
 pub use foliage::{Leaf, LeafId};
+pub use growth::{BudGrowth, SamplingConfig, grow_step, sense};
 pub use habitat::{Habitat, OpenAir};
 pub use node::{Bud, BudFate, NodeId, Slot, SlotIndex, TreeNode};
 pub use petiole::{Petiole, PetioleError, PetioleOptions, PetioleSample, solve_petiole};
+pub use restricted_jitter::{JitterPoints, RestrictedJitter, RestrictedJitterError};
 pub use species::{
     Architecture, BranchingPattern, Foliage, Gravimorphism, PetioleResponse, Shadow, Shedding,
     SpaceColonization, SpeciesError, Thickness, TreeSpecies, Tropism, Vigor, VigorModel,

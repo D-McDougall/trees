@@ -15,14 +15,14 @@ The generator runs natively and in the browser.
 
 ## Status
 
-The project is at an early stage. The data model is in place, but the growth
-simulator is not written yet.
+The project is at an early stage. The data model and occupancy-aware marker
+growth are in place; light and vigor simulation are still planned.
 
 | Crate | What works today | Planned |
 | --- | --- | --- |
-| [`trees-core`](crates/trees-core) | The tree graph (an arena of internodes whose empty child slots are buds), species parameters with validation and two presets, growing, pruning and shedding internodes, tip-to-base folds, pipe-model branch radii with width pins, stored species-dependent leaf attachments and initial frames, a Longay petiole-response rod solver, and the `Habitat` trait | The growth simulator: marker-based space colonization, a light grid, vigor allocation and automatic shedding |
+| [`trees-core`](crates/trees-core) | The tree graph (an arena of internodes whose empty child slots are buds), species parameters with validation and two presets, growing, pruning and shedding internodes, tip-to-base folds, pipe-model branch radii with width pins, stored species-dependent leaf attachments and initial frames, the `Habitat` trait, and deterministic occupancy-aware space colonization | A light grid, vigor allocation and automatic shedding |
 | [`trees-mesh`](crates/trees-mesh) | Wireframe output: one line per internode | Swept generalized cylinders, leaf instances, levels of detail |
-| [`trees-viewer`](crates/trees-viewer) | A Bevy app that grows a stand-in test tree and shows its tube mesh on a ground disc, with an orbit camera and an egui side panel that edits the seed and species growth parameters, regrowing the tree on each change. Right-click a branch for a menu that pins its width, re-solving the pipe model live; pins are marked in the view and listed in the panel | Brush, prune, bend and undo tools |
+| [`trees-viewer`](crates/trees-viewer) | A Bevy app that grows an occupancy-aware tree and shows its tube mesh on a ground disc, with an orbit camera and an egui side panel that edits the seed and species growth parameters, regrowing the tree on each change. Right-click a branch for a menu that pins its width, re-solving the pipe model live; pins are marked in the view and listed in the panel | Brush, prune, bend and undo tools |
 
 ## Quick start
 
@@ -152,3 +152,37 @@ at your option.
 Unless you explicitly state otherwise, any contribution intentionally submitted
 for inclusion in the work by you, as defined in the Apache-2.0 license, shall
 be dual licensed as above, without any additional terms or conditions.
+
+## Occupancy-aware growth API
+
+The viewer can call `trees_core::grow_step(&mut tree, &habitat,
+SamplingConfig { cell_size: 0.5, jitter: 0.25 })?` to grow one species-length
+internode per bud that wins a preferred direction. It advances the season once.
+For sensing alone, call `trees_core::sense` with the same arguments; it returns
+`Vec<BudGrowth>` and refreshes bud marker counts, sums, and active/dormant fates
+without advancing the season. `BudGrowth::preferred_direction` and
+`Bud::environment_direction()` expose the normalized sum of unit marker vectors.
+
+Both APIs use the tree seed, a world-origin `RestrictedJitter` grid, and the
+species perception distance and half-angle. Queries enclose each perception
+sector in an AABB, then apply exact distance and angle tests. Habitat occupancy
+and closed spheres at all live node tips remove markers. Closest eligible buds
+win, with node ID then main/lateral slot order breaking exact ties. Aborted buds
+are excluded; buds without a direction remain dormant. Every competition pass
+finishes before any branches grow, so new nodes compete only next season.
+Habitat implementations should keep their occupancy view consistent during a call.
+
+Markers determine direction only; `architecture.internode_length` determines
+branch length. This stage does not allocate light or vigor or blend tropisms.
+Sampling errors leave the tree unchanged. Radius/foliage refreshes beyond those
+performed by `Tree::grow` can be requested with `Tree::update_radii` after a step.
+
+The viewer's point spacing is a sampling-cell width in world units (1 unit =
+1 metre), independent of internode length. Jitter is a fraction of that width,
+from 0 to 0.49. Perception angle, distance, and occupancy radius drive the core
+API. The preview runs at most six steps and 256 nodes; distance is limited to
+four sampling cells to bound query cost. Spacing ranges from 0.25 to 5 metres,
+subject to that distance limit. Sampling edits regrow from the same seed, then
+reapply width pins by branch path. Debug sampling markers show the raw grid
+(including occupied points) in perception AABBs around up to 16 live bud nodes,
+capped at 4,000 markers. This display-only toggle never changes growth.
