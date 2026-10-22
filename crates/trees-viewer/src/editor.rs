@@ -1,7 +1,11 @@
 //! Side panel for editing the seed and every species parameter. Any change
-//! regrows the whole tree from scratch; an invalid species leaves the last
-//! good tree in place and shows why in the panel.
+//! regrows the whole tree from scratch.
+//!
+//! Every input is limited to the range [`TreeSpecies::validate`] accepts, so
+//! the panel cannot produce an invalid species. Parameters the stand-in test
+//! tree does not read yet are shown grayed out and cannot be edited.
 
+use std::f32::consts::{PI, TAU};
 use std::ops::RangeInclusive;
 
 use bevy::camera::Viewport;
@@ -16,13 +20,9 @@ use trees_core::{BranchingPattern, TreeSpecies, VigorModel};
 pub struct TreeParams {
     /// Seed for the tree's randomness.
     pub seed: u64,
-    /// Species being edited; may be invalid while the user types.
+    /// Species being edited.
     pub species: TreeSpecies,
 }
-
-/// Why the current [`TreeParams`] could not grow a tree, if they couldn't.
-#[derive(Resource, Default)]
-pub struct GrowError(pub Option<String>);
 
 /// Width of the panel when the viewer opens, in logical pixels.
 const PANEL_WIDTH: f32 = 300.0;
@@ -33,7 +33,6 @@ pub struct EditorPlugin;
 impl Plugin for EditorPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<TreeParams>()
-            .init_resource::<GrowError>()
             .add_systems(EguiPrimaryContextPass, panel);
     }
 }
@@ -41,7 +40,6 @@ impl Plugin for EditorPlugin {
 fn panel(
     mut contexts: EguiContexts,
     mut params: ResMut<TreeParams>,
-    error: Res<GrowError>,
     window: Single<&Window, With<PrimaryWindow>>,
     mut camera: Single<&mut Camera, With<Camera3d>>,
 ) -> Result {
@@ -61,7 +59,7 @@ fn panel(
         .resizable(true)
         .show(&mut root, |ui| {
             egui::ScrollArea::vertical().show(ui, |ui| {
-                parameters_ui(ui, &mut edited, error.0.as_deref());
+                parameters_ui(ui, &mut edited);
             });
         })
         .response
@@ -83,33 +81,23 @@ fn panel(
     Ok(())
 }
 
-fn parameters_ui(ui: &mut egui::Ui, params: &mut TreeParams, error: Option<&str>) {
+fn parameters_ui(ui: &mut egui::Ui, params: &mut TreeParams) {
     ui.heading("Tree");
     egui::Grid::new("tree").num_columns(2).show(ui, |ui| {
         ui.label("Seed");
         ui.add(DragValue::new(&mut params.seed));
         ui.end_row();
 
+        // A mockup: presets are not wired up yet, so the menu is empty.
         ui.label("Preset");
-        let presets = [TreeSpecies::default(), TreeSpecies::conifer()];
         egui::ComboBox::from_id_salt("preset")
             .selected_text(&params.species.name)
             .show_ui(ui, |ui| {
-                for preset in presets {
-                    let name = preset.name.clone();
-                    if ui
-                        .selectable_label(params.species == preset, name)
-                        .clicked()
-                    {
-                        params.species = preset;
-                    }
-                }
+                ui.weak("No presets yet");
             });
         ui.end_row();
     });
-    if let Some(error) = error {
-        ui.colored_label(ui.visuals().error_fg_color, error);
-    }
+    ui.weak("Grayed-out parameters have no effect until the growth simulator exists.");
     ui.separator();
     species_ui(ui, &mut params.species);
 }
@@ -126,13 +114,14 @@ fn species_ui(ui: &mut egui::Ui, s: &mut TreeSpecies) {
                 }
             });
         ui.end_row();
-        angle(ui, "Divergence φ", &mut a.divergence_angle, 360.0);
-        angle(ui, "Branching ψ", &mut a.branching_angle, 180.0);
-        angle(ui, "Deflection δ", &mut a.deflection_angle, 180.0);
+        angle(ui, "Divergence φ", &mut a.divergence_angle, 0.0..=360.0);
+        angle(ui, "Branching ψ", &mut a.branching_angle, 0.0..=180.0);
+        angle(ui, "Deflection δ", &mut a.deflection_angle, 0.0..=180.0);
         number(ui, "Internode length", &mut a.internode_length, 0.01..=10.0);
     });
 
     section(ui, "Vigor", |ui| {
+        ui.disable();
         let v = &mut s.vigor;
         ui.label("Model");
         let priority = matches!(v.model, VigorModel::Priority { .. });
@@ -161,8 +150,8 @@ fn species_ui(ui: &mut egui::Ui, s: &mut TreeSpecies) {
             top_fraction,
         } = &mut v.model
         {
-            number(ui, "w_max", w_max, 0.0..=10.0);
-            number(ui, "w_min", w_min, 0.0..=10.0);
+            number(ui, "w_min", w_min, 0.0..=*w_max);
+            number(ui, "w_max", w_max, *w_min..=10.0);
             number(ui, "Top fraction", top_fraction, 0.01..=1.0);
         }
         number(ui, "Apical control λ", &mut v.apical_control, 0.0..=1.0);
@@ -183,26 +172,24 @@ fn species_ui(ui: &mut egui::Ui, s: &mut TreeSpecies) {
     });
 
     section(ui, "Tropism", |ui| {
+        ui.disable();
         let t = &mut s.tropism;
-        angle(ui, "Lateral set-point θ", &mut t.lateral_set_point, 180.0);
-        angle(ui, "Main set-point", &mut t.main_set_point, 180.0);
+        angle(
+            ui,
+            "Lateral set-point θ",
+            &mut t.lateral_set_point,
+            0.0..=180.0,
+        );
+        angle(ui, "Main set-point", &mut t.main_set_point, 0.0..=180.0);
         number(ui, "Straightness α", &mut t.straightness, 0.0..=1.0);
         number(ui, "Gravitropism β", &mut t.gravitropism, 0.0..=1.0);
+        // These must sum to 1; a triangle picker will replace them, so
+        // they stay read-only until then.
         number(ui, "Environment γ", &mut t.environment, 0.0..=1.0);
-        ui.label("");
-        let sum = t.straightness + t.gravitropism + t.environment;
-        if ui
-            .add_enabled(sum > 0.0, egui::Button::new("Normalize weights"))
-            .clicked()
-        {
-            t.straightness /= sum;
-            t.gravitropism /= sum;
-            t.environment = 1.0 - t.straightness - t.gravitropism;
-        }
-        ui.end_row();
     });
 
     section(ui, "Gravimorphism", |ui| {
+        ui.disable();
         let g = &mut s.gravimorphism;
         number(ui, "Vertical axis", &mut g.vertical_axis, 0.01..=10.0);
         number(ui, "Horizontal axis", &mut g.horizontal_axis, 0.01..=10.0);
@@ -210,19 +197,25 @@ fn species_ui(ui: &mut egui::Ui, s: &mut TreeSpecies) {
     });
 
     section(ui, "Space colonization", |ui| {
+        ui.disable();
         let c = &mut s.space;
         number(
             ui,
             "Occupancy radius ρ",
             &mut c.occupancy_radius,
-            0.01..=20.0,
+            0.01..=c.perception_distance - 0.01,
         );
-        angle(ui, "Perception angle θ", &mut c.perception_angle, 179.0);
+        angle(
+            ui,
+            "Perception angle θ",
+            &mut c.perception_angle,
+            1.0..=179.0,
+        );
         number(
             ui,
             "Perception distance r",
             &mut c.perception_distance,
-            0.01..=50.0,
+            c.occupancy_radius + 0.01..=50.0,
         );
         number(
             ui,
@@ -233,6 +226,7 @@ fn species_ui(ui: &mut egui::Ui, s: &mut TreeSpecies) {
     });
 
     section(ui, "Shadow", |ui| {
+        ui.disable();
         let sh = &mut s.shadow;
         number(ui, "Full light C", &mut sh.full_light, 0.01..=10.0);
         number(ui, "Strength a", &mut sh.strength, 0.0..=10.0);
@@ -241,6 +235,7 @@ fn species_ui(ui: &mut egui::Ui, s: &mut TreeSpecies) {
     });
 
     section(ui, "Shedding", |ui| {
+        ui.disable();
         let sh = &mut s.shedding;
         ui.label("Enabled");
         ui.checkbox(&mut sh.enabled, "");
@@ -255,8 +250,10 @@ fn species_ui(ui: &mut egui::Ui, s: &mut TreeSpecies) {
 
     section(ui, "Thickness", |ui| {
         let th = &mut s.thickness;
-        number(ui, "Pipe exponent n", &mut th.pipe_exponent, 2.0..=3.0);
         number(ui, "Tip radius", &mut th.tip_radius, 0.001..=1.0);
+        // Disabling applies to every row after it, so the unused row goes last.
+        ui.disable();
+        number(ui, "Pipe exponent n", &mut th.pipe_exponent, 2.0..=3.0);
     });
 }
 
@@ -283,18 +280,21 @@ fn count(ui: &mut egui::Ui, label: &str, value: &mut u32, range: RangeInclusive<
 }
 
 /// An angle stored in radians, edited in degrees.
-fn angle(ui: &mut egui::Ui, label: &str, radians: &mut f32, max_degrees: f32) {
+fn angle(ui: &mut egui::Ui, label: &str, radians: &mut f32, degrees: RangeInclusive<f32>) {
     ui.label(label);
-    let mut degrees = radians.to_degrees();
+    // 180f32.to_radians() rounds to just above π, which validation rejects.
+    let to_radians = |d: f32| (d.to_radians()).min(if d <= 180.0 { PI } else { TAU });
+    let mut value = radians.to_degrees();
+    let (lo, hi) = (to_radians(*degrees.start()), to_radians(*degrees.end()));
     let response = ui.add(
-        DragValue::new(&mut degrees)
-            .range(0.0..=max_degrees)
+        DragValue::new(&mut value)
+            .range(degrees)
             .speed(0.5)
             .suffix("°"),
     );
     // Only write back real edits, so the degree round trip never nudges a value.
     if response.changed() {
-        *radians = degrees.to_radians();
+        *radians = to_radians(value).clamp(lo, hi);
     }
     ui.end_row();
 }

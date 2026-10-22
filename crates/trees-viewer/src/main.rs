@@ -19,7 +19,7 @@ use bevy_egui::{EguiGlobalSettings, EguiPlugin, PrimaryEguiContext};
 use trees_core::{Habitat, SlotIndex, Tree, TreeSpecies};
 use trees_mesh::{MeshOptions, MeshStyle, Topology, TreeMesh, TubeOptions, build_mesh};
 
-use editor::{GrowError, TreeParams};
+use editor::TreeParams;
 
 mod camera;
 mod editor;
@@ -118,23 +118,21 @@ fn setup(
     ));
 }
 
-/// Grows the tree from scratch with the current parameters. Invalid
-/// parameters keep the last tree and report why.
+/// Grows the tree from scratch with the current parameters. The panel only
+/// produces valid species, but if one slips through the last tree stays.
 fn regrow(
     params: Res<TreeParams>,
     scene: Res<Scene>,
-    mut error: ResMut<GrowError>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut view: Single<&mut Mesh3d, With<TreeView>>,
 ) {
     let tree = match test_tree(&*scene, params.species.clone(), params.seed) {
         Ok(tree) => tree,
         Err(e) => {
-            error.0 = Some(e.to_string());
+            warn!("kept the last tree: {e}");
             return;
         }
     };
-    error.0 = None;
     let options = MeshOptions {
         style: MeshStyle::Tubes(TubeOptions::default()),
     };
