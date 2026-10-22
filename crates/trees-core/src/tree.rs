@@ -129,6 +129,37 @@ impl Tree {
             .filter_map(|(i, n)| n.as_ref().map(|n| (NodeId(i as u32), n)))
     }
 
+    /// The slots leading from the root to `id`, or `None` if `id` was pruned
+    /// or shed. The root's path is empty.
+    ///
+    /// Unlike a [`NodeId`], a path names the same branch in a tree regrown
+    /// with a different seed or species, wherever such a branch exists.
+    pub fn slot_path(&self, id: NodeId) -> Option<Vec<SlotIndex>> {
+        let mut path = Vec::new();
+        let mut node = self.get(id)?;
+        let mut id = id;
+        while let Some(parent) = node.parent {
+            node = self.node(parent);
+            let (slot, _) = node
+                .slots()
+                .find(|(_, s)| s.child() == Some(id))
+                .expect("parent holds its child");
+            path.push(slot);
+            id = parent;
+        }
+        path.reverse();
+        Some(path)
+    }
+
+    /// The node reached by following `path` from the root, or `None` if
+    /// some slot on the way holds no child; see [`Tree::slot_path`].
+    pub fn node_at(&self, path: &[SlotIndex]) -> Option<NodeId> {
+        path.iter().try_fold(self.root(), |id, &slot| match slot {
+            SlotIndex::Lateral(i) if i > 1 => None,
+            _ => self.node(id).slot(slot).child(),
+        })
+    }
+
     /// Grows the bud in `slot` of `parent` into a new internode.
     ///
     /// Returns `None` if `parent` was pruned, the slot holds no bud, or
@@ -265,6 +296,18 @@ impl Tree {
     /// The width pins as (node, radius) pairs, in id order.
     pub fn pins(&self) -> impl Iterator<Item = (NodeId, f32)> + '_ {
         self.pins.iter().map(|(&id, &r)| (id, r))
+    }
+
+    /// The pipe exponent [`Tree::update_radii`] uses inside the subtree of
+    /// the pinned node `id`, or `None` if `id` is not pinned. This is the
+    /// species' exponent when no exponent makes the pin hold.
+    ///
+    /// Solved from the tree as it is now, so it is current even before the
+    /// next [`Tree::update_radii`].
+    pub fn pin_exponent(&self, id: NodeId) -> Option<f32> {
+        let &r = self.pins.get(&id)?;
+        let n = pipe_exponent(&self.boundary(id), r);
+        Some(n.map_or(self.species.thickness.pipe_exponent, |n| n as f32))
     }
 
     /// Sets every node's radius by the pipe model, rⁿ = Σ r_iⁿ (Hart 2020
@@ -567,6 +610,27 @@ mod tests {
             t.grow(&OpenAir, id, slot, dir, 1.0);
         }
         t.advance_step();
+    }
+
+    #[test]
+    fn slot_paths_round_trip_and_survive_regrowth() {
+        let mut t = bushy(4);
+        assert_eq!(t.slot_path(t.root()), Some(vec![]));
+        for (id, _) in t.iter() {
+            assert_eq!(t.node_at(&t.slot_path(id).unwrap()), Some(id));
+        }
+        let (a, b) = (SlotIndex::Main, SlotIndex::Lateral(0));
+        let id = t.node_at(&[a, b, a]).unwrap();
+        // The same path names the same branch in an identically grown tree,
+        // even after an unrelated prune retired other ids.
+        let other = bushy(4);
+        assert_eq!(other.node_at(&[a, b, a]), Some(id));
+        t.prune(t.node_at(&[b]).unwrap());
+        assert_eq!(t.node_at(&[a, b, a]), Some(id));
+        assert_eq!(t.node_at(&[b]), None, "pruned");
+        assert_eq!(t.node_at(&[SlotIndex::Lateral(1)]), None, "unused slot");
+        assert_eq!(t.node_at(&[SlotIndex::Lateral(7)]), None, "no such slot");
+        assert_eq!(t.slot_path(NodeId(9999)), None);
     }
 
     #[test]
@@ -925,6 +989,22 @@ mod tests {
             let r = f64::from(r_tip) * tips.powf(n.recip());
             assert!(approx(node.radius, r as f32));
         }
+    }
+
+    #[test]
+    fn pin_exponent_reports_solved_or_species_n() {
+        let mut t = bushy(4);
+        let root = t.root();
+        assert_eq!(t.pin_exponent(root), None, "not pinned");
+        t.pin_radius(root, 0.5);
+        let solved = pipe_exponent(&t.boundary(root), 0.5).unwrap();
+        assert_eq!(t.pin_exponent(root), Some(solved as f32));
+        // Too thin to solve: the subtree keeps the species' n.
+        t.pin_radius(root, 0.01);
+        let species_n = t.species().thickness.pipe_exponent;
+        assert_eq!(t.pin_exponent(root), Some(species_n));
+        t.unpin(root);
+        assert_eq!(t.pin_exponent(root), None);
     }
 
     #[test]

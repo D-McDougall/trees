@@ -1,7 +1,8 @@
 //! Minimal Bevy viewer: grows a small test tree with a fixed rule (there is
 //! no growth simulator yet) and draws its tube mesh. A side panel edits the
-//! seed and species, regrowing the tree on every change. Drag to orbit the
-//! camera, right-drag to pan and scroll to zoom.
+//! seed and species, regrowing the tree on every change, and lists the width
+//! pins. Click a branch to select it. Drag to orbit the camera, right-drag
+//! to pan and scroll to zoom.
 //!
 //! Native: `cargo run -p trees-viewer`
 //! Web:    `cd crates/trees-viewer && trunk serve`, then open http://127.0.0.1:8080
@@ -20,10 +21,13 @@ use bevy_egui::{EguiGlobalSettings, EguiPlugin, PrimaryEguiContext};
 use trees_core::{Habitat, SlotIndex, Tree, TreeSpecies};
 use trees_mesh::{MeshOptions, MeshStyle, Topology, TreeMesh, TubeOptions, build_mesh};
 
+use branches::{ShownTree, WidthPins};
 use editor::TreeParams;
 
+mod branches;
 mod camera;
 mod editor;
+mod pick;
 
 fn main() {
     App::new()
@@ -39,9 +43,16 @@ fn main() {
             ..default()
         }))
         .add_plugins(EguiPlugin::default())
-        .add_plugins((camera::CameraControlsPlugin, editor::EditorPlugin))
+        .add_plugins((
+            camera::CameraControlsPlugin,
+            editor::EditorPlugin,
+            branches::BranchesPlugin,
+        ))
         .add_systems(Startup, setup)
-        .add_systems(Update, regrow.run_if(resource_changed::<TreeParams>))
+        .add_systems(
+            Update,
+            (regrow.run_if(resource_changed::<TreeParams>), show_tree).chain(),
+        )
         .run();
 }
 
@@ -61,9 +72,13 @@ impl Habitat for Scene {
     }
 }
 
-/// Marks the entity showing the tree; [`regrow`] replaces its mesh.
+/// Marks the entity showing the tree; [`show_tree`] replaces its mesh.
 #[derive(Component)]
 struct TreeView;
+
+/// The tree as grown from [`TreeParams`], before width pins.
+#[derive(Resource)]
+struct GrownTree(Tree);
 
 fn setup(
     mut commands: Commands,
@@ -87,7 +102,7 @@ fn setup(
             .with_translation(Vec3::Y * scene.ground_height),
         NotShadowCaster,
     ));
-    // The tree's mesh is filled in by `regrow`.
+    // The tree's mesh is filled in by `show_tree`.
     commands.spawn((
         TreeView,
         Mesh3d::default(),
@@ -136,24 +151,33 @@ fn setup(
 
 /// Grows the tree from scratch with the current parameters. The panel only
 /// produces valid species, but if one slips through the last tree stays.
-fn regrow(
-    params: Res<TreeParams>,
-    scene: Res<Scene>,
+fn regrow(mut commands: Commands, params: Res<TreeParams>, scene: Res<Scene>) {
+    match test_tree(&*scene, params.species.clone(), params.seed) {
+        Ok(tree) => commands.insert_resource(GrownTree(tree)),
+        Err(e) => warn!("kept the last tree: {e}"),
+    }
+}
+
+/// Applies the width pins to the grown tree and shows the result, whenever
+/// either changes.
+fn show_tree(
+    mut commands: Commands,
+    grown: Option<Res<GrownTree>>,
+    pins: Res<WidthPins>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut view: Single<&mut Mesh3d, With<TreeView>>,
 ) {
-    let tree = match test_tree(&*scene, params.species.clone(), params.seed) {
-        Ok(tree) => tree,
-        Err(e) => {
-            warn!("kept the last tree: {e}");
-            return;
-        }
+    let Some(grown) = grown.filter(|g| g.is_changed() || pins.is_changed()) else {
+        return;
     };
+    let mut tree = grown.0.clone();
+    pins.apply(&mut tree);
     let options = MeshOptions {
         style: MeshStyle::Tubes(TubeOptions::default()),
     };
     // Dropping the old handle frees the old mesh.
     view.0 = meshes.add(to_bevy_mesh(build_mesh(&tree, &options)));
+    commands.insert_resource(ShownTree(tree));
 }
 
 /// A stand-in until the growth simulator exists: every bud grows each step,

@@ -1,4 +1,5 @@
-//! Side panel for editing the seed and every species parameter. Any change
+//! Side panel for editing the seed and every species parameter, and for
+//! inspecting the selected branch and the width pins. Any parameter change
 //! regrows the whole tree from scratch.
 //!
 //! Every input is limited to the range [`TreeSpecies::validate`] accepts, so
@@ -12,8 +13,11 @@ use bevy::camera::Viewport;
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use bevy_egui::egui::{self, DragValue};
+use bevy_egui::input::EguiWantsInput;
 use bevy_egui::{EguiContexts, EguiPrimaryContextPass};
-use trees_core::{BranchingPattern, TreeSpecies, VigorModel};
+use trees_core::{BranchingPattern, SlotIndex, Tree, TreeSpecies, VigorModel};
+
+use crate::branches::{Selection, ShownTree, WidthPins, path_label};
 
 /// What the tree is grown from. Changing it triggers a regrow.
 #[derive(Resource, Clone, Default, PartialEq)]
@@ -30,6 +34,12 @@ pub struct TreeParams {
 #[derive(Resource, Default)]
 pub struct PanelWidth(pub f32);
 
+/// True if the pointer at `cursor` is over the panel or over an egui popup
+/// such as an open drop-down menu, so the 3D view must ignore it.
+pub fn pointer_over_panel(egui: &EguiWantsInput, panel: &PanelWidth, cursor: Option<Vec2>) -> bool {
+    egui.wants_pointer_input() || cursor.is_some_and(|c| c.x < panel.0)
+}
+
 /// Width of the panel when the viewer opens, in logical pixels.
 const PANEL_WIDTH: f32 = 300.0;
 
@@ -44,9 +54,13 @@ impl Plugin for EditorPlugin {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn panel(
     mut contexts: EguiContexts,
     mut params: ResMut<TreeParams>,
+    mut pins: ResMut<WidthPins>,
+    tree: Option<Res<ShownTree>>,
+    selection: Res<Selection>,
     mut panel_width: ResMut<PanelWidth>,
     window: Single<&Window, With<PrimaryWindow>>,
     mut camera: Single<&mut Camera, With<Camera3d>>,
@@ -55,6 +69,7 @@ fn panel(
     // Edit a copy and write it back only if it differs, so that redrawing the
     // panel does not count as a change.
     let mut edited = params.clone();
+    let mut edited_pins = pins.clone();
     let mut root = egui::Ui::new(
         ctx.clone(),
         "viewport".into(),
@@ -67,7 +82,11 @@ fn panel(
         .resizable(true)
         .show(&mut root, |ui| {
             egui::ScrollArea::vertical().show(ui, |ui| {
-                parameters_ui(ui, &mut edited);
+                tree_ui(ui, &mut edited);
+                let tree = tree.as_deref().map(|t| &t.0);
+                branch_ui(ui, tree, selection.0.as_deref(), &mut edited_pins);
+                ui.separator();
+                species_ui(ui, &mut edited.species);
             });
         })
         .response
@@ -76,6 +95,9 @@ fn panel(
     panel_width.0 = width;
     if edited != *params {
         *params = edited;
+    }
+    if edited_pins != *pins {
+        *pins = edited_pins;
     }
 
     // Draw the scene in the space right of the panel, so the tree stays
@@ -90,7 +112,7 @@ fn panel(
     Ok(())
 }
 
-fn parameters_ui(ui: &mut egui::Ui, params: &mut TreeParams) {
+fn tree_ui(ui: &mut egui::Ui, params: &mut TreeParams) {
     ui.heading("Tree");
     egui::Grid::new("tree").num_columns(2).show(ui, |ui| {
         ui.label("Seed");
@@ -107,8 +129,87 @@ fn parameters_ui(ui: &mut egui::Ui, params: &mut TreeParams) {
         ui.end_row();
     });
     ui.weak("Grayed-out parameters have no effect until the growth simulator exists.");
-    ui.separator();
-    species_ui(ui, &mut params.species);
+}
+
+/// The selected branch and the list of width pins. A pin is grayed out
+/// while its branch is missing from the tree (or is a stump), and its radius
+/// is highlighted when the pin is too thin to hold and its node is widened.
+fn branch_ui(
+    ui: &mut egui::Ui,
+    tree: Option<&Tree>,
+    selected: Option<&[SlotIndex]>,
+    pins: &mut WidthPins,
+) {
+    let Some(tree) = tree else { return };
+    section(ui, "Selected branch", |ui| {
+        let found = selected.and_then(|path| Some((path, tree.node_at(path)?)));
+        let Some((path, id)) = found else {
+            ui.weak("Click a branch to select it.");
+            ui.end_row();
+            return;
+        };
+        let node = tree.node(id);
+        ui.label("Branch");
+        ui.label(format!("#{} ({})", id.index(), path_label(path)));
+        ui.end_row();
+        ui.label("Radius");
+        ui.label(format!("{:.4}", node.radius));
+        ui.end_row();
+        let pinned = pins.0.iter().any(|(p, _)| p == path);
+        if !pinned && !node.stump && ui.button("Pin at this width").clicked() {
+            pins.0.push((path.to_vec(), node.radius));
+        }
+        ui.end_row();
+    });
+
+    egui::CollapsingHeader::new("Width pins")
+        .default_open(true)
+        .show(ui, |ui| {
+            if pins.0.is_empty() {
+                ui.weak("No pins.");
+                return;
+            }
+            let mut unpin = None;
+            egui::Grid::new("width pins").num_columns(4).show(ui, |ui| {
+                ui.strong("Branch");
+                ui.strong("Radius");
+                ui.strong("n");
+                ui.end_row();
+                for (i, (path, r)) in pins.0.iter().enumerate() {
+                    let id = tree.node_at(path);
+                    match id.and_then(|id| Some((id, tree.pin_exponent(id)?))) {
+                        Some((id, n)) => {
+                            ui.label(format!("#{}", id.index()))
+                                .on_hover_text(path_label(path));
+                            let shown = tree.node(id).radius;
+                            if shown > *r {
+                                ui.colored_label(
+                                    egui::Color32::from_rgb(230, 160, 40),
+                                    format!("{r:.4}"),
+                                )
+                                .on_hover_text(format!("Too thin to hold: widened to {shown:.4}"));
+                            } else {
+                                ui.label(format!("{r:.4}"));
+                            }
+                            ui.label(format!("{n:.2}"));
+                        }
+                        None => {
+                            ui.weak(path_label(path))
+                                .on_hover_text("This branch is not in the current tree.");
+                            ui.weak(format!("{r:.4}"));
+                            ui.weak("–");
+                        }
+                    }
+                    if ui.button("Unpin").clicked() {
+                        unpin = Some(i);
+                    }
+                    ui.end_row();
+                }
+            });
+            if let Some(i) = unpin {
+                pins.0.remove(i);
+            }
+        });
 }
 
 fn species_ui(ui: &mut egui::Ui, s: &mut TreeSpecies) {
