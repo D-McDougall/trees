@@ -1,2 +1,4 @@
 /target
 dist/
+docs/*.pdf
+docs/*.pdf.txt
