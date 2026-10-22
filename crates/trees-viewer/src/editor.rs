@@ -260,8 +260,6 @@ fn species_ui(ui: &mut egui::Ui, s: &mut TreeSpecies) {
     section(ui, "Thickness", |ui| {
         let th = &mut s.thickness;
         number(ui, "Tip radius", &mut th.tip_radius, 0.001..=1.0);
-        // Disabling applies to every row after it, so the unused row goes last.
-        ui.disable();
         number(ui, "Pipe exponent n", &mut th.pipe_exponent, 2.0..=3.0);
     });
 }

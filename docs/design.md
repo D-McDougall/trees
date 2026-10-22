@@ -68,7 +68,7 @@ Each growth step stands for one season and runs the same eight stages. A bud gro
 5. **Distribute vigor (base to tip).** The root's vigor is split at every branch point between the continuing axis and the laterals, weighted by their light and by apical control λ (extended Borchert–Honda model). *Why:* λ is the single knob that moves a tree from a clear trunk (conifer-like) to a spreading crown (oak-like).
 6. **Grow shoots.** Each active bud adds a shoot whose length scales with its share of the maximum vigor. Shoot direction blends three pulls: keep going straight, follow the species' preferred angle to gravity, and head toward the bud's markers. New lateral buds are placed by the phyllotaxis and branching angles.
 7. **Shed.** Remove branches whose light per internode falls below a threshold. *Why:* shedding forms bare lower trunks; it is optional because it can delete branches a user painted.
-8. **Update thickness (tip to base).** Radii follow the pipe model: a parent's cross-section relates to the sum of its children's, with an exponent between 2 and 3. Radii never shrink when branches are shed, so trunks keep the scars of their past.
+8. **Update thickness (tip to base).** Radii follow the pipe model: a parent's cross-section relates to the sum of its children's, with an exponent between 2 and 3. Radii never shrink when branches are shed: a shed branch leaves a stump that keeps its radius, and stumps are permanent, so they are the tree's memory of its shed branches (Pałubicki 2009 §4.5) and trunks keep the scars of their past.
 
 An alternative vigor model is worth keeping behind the same interface: the **priority model** (Pałubicki 2009), which ranks branches along an axis and is better for animating a tree that loses apical control with age.
 
@@ -91,7 +91,7 @@ Control works by changing the simulator's inputs, not by overriding its outputs.
 | Lasso envelope | Draws a crown silhouette | Inflates the 2D outline to a 3D volume and fills it with markers |
 | Directional stroke | Brushes in a direction | Sets a local tropism, so branches flow with the stroke |
 | Selective growth | Picks a branch to grow | Restricts active buds to that subtree; all buds still claim space |
-| Prune | Cuts a branch | Removes a subtree; thickness re-propagates |
+| Prune | Cuts a branch | Cut: leaves a stump that keeps its thickness; stumps are never removed |
 | Bend | Drags a handle on a branch | Solves an elastic deformation where thick branches resist more than thin ones |
 | Thickness pins | Sets trunk or branch width at a point | Each subtree solves for its own pipe exponent so the pins hold |
 | Parameter panel | Picks a species preset and tunes its sliders, including a triangle widget for the straight / gravity / space blend, before growth starts | Sets the species record, fixed for the tree's lifetime |
@@ -105,7 +105,7 @@ Geometry is built in four passes from a render snapshot, each pass independent p
 
 1. **Split into axes.** Each axis follows a node's main (apical) child and every lateral starts a new axis. The apical continuation is fixed by the tree, never inferred from thickness: a lateral that outgrows its parent still branches off, and when the main child is shed or pruned the axis ends at its stump or at the fork instead of a lateral taking over. *Why:* re-routing an axis through a lateral would change that branch's shape the moment its neighbor is cut. The cost is visible cracks where a lateral is thicker than the continuing axis, which the junction meshes below are meant to fix.
 2. **Smooth the skeleton.** Each axis becomes a chain of quadratic rational Bézier curves through internode midpoints, smooth along every root-to-tip path. One weight controls how sharp the corners are.
-3. **Sweep generalized cylinders.** A cross-section ring is swept along each curve using a parallel-transport frame (no twisting). Because each segment is planar, the frame at any point has a closed form, so every vertex can be computed independently. Radius blends smoothly between internodes; ring resolution scales with radius, so trunks get many sides and twigs few. Texture coordinates use a cheap arc-length approximation.
+3. **Sweep generalized cylinders.** A cross-section ring is swept along each curve using a parallel-transport frame (no twisting). Because each segment is planar, the frame at any point has a closed form, so every vertex can be computed independently. Radius is planned to blend smoothly between internodes; for now rings at each node are joined by straight segments. Ring resolution scales with radius, so trunks get many sides and twigs few. Texture coordinates use a cheap arc-length approximation.
 4. **Place foliage.** Leaves attach to branches below a width threshold, independently of buds. Each leaf is turned toward its preferred orientation by modelling the petiole as a rod that twists and bends. Leaves are instances of a few card or mesh templates, not unique geometry. Fruit and flowers use the same mechanism with a light-weighted probability.
 
 **Level of detail.** Distant trees drop thin branches below a screen-size threshold (replacing them with leaf clusters), reduce ring resolution, and finally become impostors. The thickness-ordered tree graph makes this a simple radius cut.

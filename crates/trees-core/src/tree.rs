@@ -171,12 +171,15 @@ impl Tree {
     }
 
     /// Removes the subtree rooted at `id` and empties its parent's slot.
-    /// Returns how many nodes were removed. The root cannot be pruned.
+    /// Returns how many nodes were removed.
     ///
-    /// This is the user's edit, so unlike [`Tree::shed`] it leaves no stump,
-    /// and it can remove a stump.
+    /// This is the user's edit, so unlike [`Tree::shed`] it leaves no stump.
+    /// Returns 0 and changes nothing if `id` is missing, the root, or a stump:
+    /// stumps are permanent, since they are the pipe model's memory of shed
+    /// branches (see [`Tree::update_radii`]). Pruning an ancestor still
+    /// removes the stumps inside that limb.
     pub fn prune(&mut self, id: NodeId) -> usize {
-        let Some(parent) = self.get(id).and_then(|n| n.parent) else {
+        let Some(parent) = self.get(id).filter(|n| !n.stump).and_then(|n| n.parent) else {
             return 0;
         };
         let p = self.node_mut(parent);
@@ -232,6 +235,38 @@ impl Tree {
         self.remove_subtrees(children)
     }
 
+    /// Sets every node's radius by the pipe model, rⁿ = Σ r_iⁿ with n the
+    /// species' pipe exponent (Hart 2020 §9.8), in one tip-to-base pass.
+    ///
+    /// A living node with no children has the species' tip radius. A stump
+    /// keeps the radius it had when it was shed and is never written, so the
+    /// cross-section of a shed branch still reaches the trunk below it. Since
+    /// stumps are permanent, they are Pałubicki 2009 §4.5's "memory of past
+    /// branches" with no extra bookkeeping, and a radius never decreases as
+    /// the tree grows and sheds.
+    pub fn update_radii(&mut self) {
+        let thickness = &self.species.thickness;
+        let n = f64::from(thickness.pipe_exponent);
+        let tip = f64::from(thickness.tip_radius);
+        // Each node's rⁿ. A stump is checked first: it is terminal too.
+        let powers = self.fold_up(|node, kids| {
+            if node.stump {
+                f64::from(node.radius).powf(n)
+            } else if node.is_terminal() {
+                tip.powf(n)
+            } else {
+                kids.sum()
+            }
+        });
+        for (node, power) in self.nodes.iter_mut().zip(powers) {
+            if let (Some(node), Some(power)) = (node, power)
+                && !node.stump
+            {
+                node.radius = root_up(power, n);
+            }
+        }
+    }
+
     /// Removes the subtrees rooted at `roots`, retiring their ids, and
     /// returns how many nodes were removed. Callers fix up the parents' slots.
     fn remove_subtrees(&mut self, mut stack: Vec<NodeId>) -> usize {
@@ -267,6 +302,18 @@ impl Tree {
             out[id.index()] = Some(value);
         }
         out
+    }
+}
+
+/// The smallest `f32` r with rⁿ ≥ `power`. Rounding up, not to nearest,
+/// means a stump frozen at r still contributes at least the cross-section
+/// it carried, so shedding can never thin the nodes below it by an ulp.
+fn root_up(power: f64, n: f64) -> f32 {
+    let r = power.powf(n.recip()) as f32;
+    if f64::from(r).powf(n) < power {
+        r.next_up()
+    } else {
+        r
     }
 }
 
@@ -537,8 +584,110 @@ mod tests {
         assert!(t.get(m).is_none());
         assert_eq!(t.shed(m), 0, "already removed");
         assert_eq!(t.shed(NodeId(999)), 0, "never existed");
-        // A user prune still removes the stump itself.
-        assert_eq!(t.prune(l), 1);
+    }
+
+    #[test]
+    fn prune_refuses_stumps_but_not_their_ancestors() {
+        let (mut t, [a, _, l]) = forked();
+        t.shed(l);
+        let len = t.len();
+        assert_eq!(t.prune(l), 0, "stumps are never removed");
+        assert_eq!(t.len(), len);
+        assert!(t.node(l).stump);
+        assert_eq!(t.node(a).laterals[0], Slot::Child(l));
+        // Pruning the limb that carries the stump removes it with the limb.
+        assert_eq!(t.prune(a), 3);
+        assert!(t.get(l).is_none());
+    }
+
+    fn approx(a: f32, b: f32) -> bool {
+        (a / b - 1.0).abs() < 1e-4
+    }
+
+    #[test]
+    fn update_radii_conserves_cross_section_with_stumps() {
+        // Root rⁿ = (living tips)·r_tipⁿ + Σ stump rⁿ.
+        let mut t = bushy(5);
+        t.update_radii();
+        let victims: Vec<_> = t
+            .iter()
+            .filter(|(_, n)| n.order == 1)
+            .map(|(id, _)| id)
+            .collect();
+        for id in victims.into_iter().step_by(3) {
+            t.shed(id);
+        }
+        t.update_radii();
+        let n = t.species().thickness.pipe_exponent;
+        let r_tip = t.species().thickness.tip_radius;
+        let tips = t
+            .iter()
+            .filter(|(_, x)| x.is_terminal() && !x.stump)
+            .count() as f32;
+        let stumps: f32 = t
+            .iter()
+            .filter(|(_, x)| x.stump)
+            .map(|(_, x)| x.radius.powf(n))
+            .sum();
+        assert!(stumps > 0.0);
+        let root = t.node(t.root()).radius;
+        assert!(approx(root.powf(n), tips * r_tip.powf(n) + stumps));
+        for (_, node) in t.iter() {
+            let sum: f32 = node.children().map(|c| t.node(c).radius.powf(n)).sum();
+            if !node.is_terminal() {
+                assert!(approx(node.radius.powf(n), sum));
+            }
+        }
+    }
+
+    #[test]
+    fn update_radii_keeps_stump_radius() {
+        let (mut t, [_, _, l]) = forked();
+        t.shed(l);
+        t.update_radii();
+        assert_eq!(t.node(l).radius, 0.05);
+    }
+
+    #[test]
+    fn radii_never_decrease_through_shedding_and_growth() {
+        let mut t = bushy(4);
+        t.update_radii();
+        for round in 0..6u32 {
+            let before: Vec<Option<f32>> = t
+                .nodes
+                .iter()
+                .map(|n| n.as_ref().map(|n| n.radius))
+                .collect();
+            // Shed a few living, non-root branches, picked by position in the arena.
+            let candidates: Vec<_> = t
+                .iter()
+                .filter(|(id, n)| !n.stump && *id != t.root())
+                .map(|(id, _)| id)
+                .collect();
+            for id in candidates.iter().skip(round as usize + 2).step_by(7) {
+                t.shed(*id);
+            }
+            t.update_radii();
+            let buds: Vec<_> = t
+                .iter()
+                .flat_map(|(id, n)| n.buds().map(move |(s, b)| (id, s, b.direction)))
+                .collect();
+            for (id, slot, dir) in buds {
+                t.grow(&OpenAir, id, slot, dir, 1.0);
+            }
+            t.advance_step();
+            t.update_radii();
+            for (id, node) in t.iter() {
+                if let Some(Some(old)) = before.get(id.index()) {
+                    assert!(
+                        node.radius >= *old,
+                        "node {id:?} thinned in round {round}: {old} -> {}",
+                        node.radius
+                    );
+                }
+            }
+        }
+        assert!(t.iter().any(|(_, n)| n.stump));
     }
 
     #[test]

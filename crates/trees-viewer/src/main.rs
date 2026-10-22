@@ -159,7 +159,7 @@ fn regrow(
 /// A stand-in until the growth simulator exists: every bud grows each step,
 /// bent upward a little and jittered by `seed`, with shorter internodes on
 /// higher-order branches. Buds that would grow into `habitat`'s occupied
-/// space stay dormant.
+/// space stay dormant. Radii follow the pipe model after every step.
 fn test_tree(
     habitat: &impl Habitat,
     species: TreeSpecies,
@@ -196,6 +196,7 @@ fn test_tree(
             );
         }
         tree.advance_step();
+        tree.update_radii();
     }
     Ok(tree)
 }

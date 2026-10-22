@@ -150,7 +150,8 @@ pub struct TreeNode {
     pub lateral: Vec3,
     /// Length of the internode, from [`TreeNode::base`] to `position`.
     pub length: f32,
-    /// Current radius from the pipe model. Never decreases, and a shed branch
+    /// Current radius from the pipe model, set by
+    /// [`Tree::update_radii`](crate::Tree::update_radii). Never decreases, and a shed branch
     /// leaves a stump that keeps its radius, so trunks keep the thickness of
     /// branches that were later shed.
     pub radius: f32,
