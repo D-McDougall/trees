@@ -42,7 +42,8 @@ pub struct Leaf {
 
 impl Leaf {
     /// Initial blade base at the end of the straight, unbent petiole.
-    /// Use the owning tree's species petiole length.
+    /// Use the owning tree's species petiole length. For the reoriented
+    /// endpoint, use [`crate::solve_petiole`] and [`crate::Petiole::tip`].
     pub fn blade_base(&self, petiole_length: f32) -> Vec3 {
         self.attachment + self.heading * petiole_length
     }

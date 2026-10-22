@@ -4,10 +4,12 @@ The core stores leaves in `Tree::leaves()` alongside the branch graph. Leaves
 are not branch children or buds. They are deterministic records included in
 `Tree::clone()` snapshots, and are available without a renderer or image asset.
 
-This change implements the species schema and **initial attachment placement**.
-It does not yet render textured leaves, load PNGs, persist settings, or solve petiole
-bending/twisting. `Leaf::heading`, `left` and `normal` describe the initial
-blade frame, not a final orientation obtained by the later rod solver.
+The core implements initial attachment placement and an isolated Longay petiole
+rod solver. It does not yet render textured leaves, load PNGs or persist settings.
+`Leaf::heading`, `left` and `normal` remain the initial blade frame. Call
+`solve_petiole` for final petiole samples and a reoriented blade endpoint/frame.
+The temporary viewer still uses the initial frame; solver-driven geometry and
+petiole-response UI controls are the next integration steps.
 
 ## Source and implementation choices
 
@@ -72,7 +74,11 @@ botanical measurements.
 | `attachment_angle` | 60 degrees | Finite radians in `[0, π]` |
 | `blade_length` | 0.1016 (4 inches) | Non-negative finite distance from blade base to tip |
 | `blade_width` | 0.1016 (4 inches) | Non-negative finite distance across blade |
-| `petiole_length` | 0.08 | Non-negative finite straight initial length |
+| `petiole_length` | 0.08 | Non-negative finite rod arc length |
+| `petiole_response.target` | `(0, 1, 0)` | Finite nonzero normalizable world-space preferred blade-normal direction; normalized by solver |
+| `petiole_response.twist` | 2.0 | Non-negative finite eH, twist susceptibility about H |
+| `petiole_response.bend` | 2.0 | Non-negative finite eL, bend susceptibility about L |
+| `petiole_response.turn` | 2.0 | Non-negative finite eU, turn susceptibility about U |
 | `appearance` | `generic-broadleaf` | Opaque, engine-neutral key resolved by the viewer later |
 
 A zero blade dimension suppresses leaves. Zero petiole length is permitted.
@@ -80,8 +86,98 @@ Validation applies even when foliage is disabled. Image bytes and renderer handl
 never belong in the species record. A future conifer implementation can introduce
 new foliage parameters and templates; the existing conifer preset explicitly has
 foliage disabled until needle support exists. Its growth architecture is unchanged.
-Petiole elasticity and target-orientation fields will accompany their solver in
-the later orientation unit rather than expose parameters with no effect now.
+Response susceptibilities have units of radians per world unit for a unit
+target, and are illustrative defaults rather than measured elastic moduli. A
+zero susceptibility disables that component; all three zero give a straight rod.
+Target magnitude has no effect: target normalization is an explicit project
+convention that separates response strength from target direction.
+
+## Longay petiole-response solver
+
+`trees-core/src/petiole.rs` implements Appendix C.1.2, printed pp. 143–144.
+For the right-handed unit frame H (tangent), L (blade-left) and U (blade-normal),
+and normalized target direction T, use Longay's component rates exactly:
+
+```text
+ΩH = -eH * dot(L, T)
+ΩL =  eL * dot(H, T)
+ΩU =  eU * dot(L, cross(T, cross(H, T)))
+Ω  = ΩH * H + ΩL * L + ΩU * U
+```
+
+These are rates per arc length, not angles per iteration. A rod of length S
+is integrated from its bark attachment toward its blade with `ds = S / N`.
+The target is fixed in world space for a solve. This is Longay's response
+model, not Hart's iteration-count-based reorientation or a light simulation.
+It is not a global optimization guaranteeing the normal will reach T.
+In particular, exactly aligned and exactly opposite normals are zero-torque
+equilibria; no arbitrary flip is introduced at the opposite normal.
+
+The numerical method is a project choice consistent with the infinitesimal
+rates, rather than a finite rotation-order prescription from the paper:
+
+1. Validate response, rod length, resolution and initial attachment/frame.
+   Reject non-finite attachment coordinates, invalid frames, negative or
+   non-finite length, and non-normalizable target vectors. Resolution must
+   be in `1..=4096`, including for zero-length rods.
+2. Accept initial frame rounding within `1e-4`, then orthonormalize in f64.
+3. At each segment, compute Ω at the current frame. Rotate a trial frame by
+   `Ω * ds/2` using a quaternion to obtain a midpoint estimate.
+4. Advance the position by `midpoint.H * ds`, and rotate the original frame
+   by `Ω(midpoint) * ds`. This explicit midpoint step is second order for
+   smooth solutions and avoids choosing a privileged order for finite H/L/U
+   rotations. Quaternion rotations preserve frame orthogonality.
+5. Emit the endpoint position and frame, and repeat proximally to distally.
+   Internal positions and rotations use f64; returned samples use f32 and
+   non-finite output is rejected explicitly.
+
+The polyline has N equal-length chords before f32 rounding, with total length
+S. Its chord directions approximate the smooth midpoint tangents; sample frames
+represent boundary tangents rather than exact chord directions. Increasing N
+refines the path and final frame without multiplying the biological response.
+The default `PetioleOptions { segments: 32 }` is independent of species data.
+Strong responses or long rods may need finer resolution: there is no adaptive
+error estimator, and finite output alone does not certify convergence. At large
+world coordinates, f32 output rounding also limits resolvable segment lengths.
+
+The public API returns `Result<Petiole, PetioleError>`. `samples()` always includes
+the initial attachment and, for positive length, N subsequent samples. A
+zero-length rod returns only the initial position/frame, with no duplicate or
+zero-length segments. `tip()` returns the final sample: its position is the
+blade's bottom-center pivot, and its H/L/U frame orients and scales the blade.
+Continue to apply width and length from that base rather than from its center.
+`Leaf::blade_base` remains an explicitly **unbent** convenience method; final
+geometry should instead use the solver's endpoint.
+
+```rust
+use std::sync::Arc;
+use glam::Vec3;
+use trees_core::{Tree, TreeSpecies, PetioleOptions, solve_petiole};
+
+let mut species = TreeSpecies::default();
+species.foliage.petiole_response.twist = 3.0;
+species.foliage.petiole_response.bend = 1.0;
+let tree = Tree::new(Arc::new(species), 42, Vec3::ZERO)?;
+let rod = solve_petiole(
+    &tree.leaves()[0], &tree.species().foliage, PetioleOptions::default(),
+)?;
+let blade_base = rod.tip().position;
+let blade_normal = rod.tip().normal;
+```
+
+The solver is pure: it does not change stored leaf attachments, buds, branches,
+seeds or the species record. Rod samples are derived on demand and can be rebuilt
+from an immutable tree snapshot. Solver errors distinguish invalid response,
+length, segment count, initial frame and non-finite output. Only response and
+petiole length are read from the foliage record; blade size and appearance do
+not change the solved rod.
+
+Tests cover the three signed torque components; single-axis analytic solutions
+for twist, bending and the bent centerline; zero response and zero length;
+length preservation and orthonormal frames; aligned, opposite and near-parallel
+cases; deterministic solves and target normalization; invalid input/output
+handling; real stored leaf fixtures and stationary anchors; and convergence
+against a high-resolution reference as segment counts increase.
 
 ## Ownership, identity and update lifecycle
 

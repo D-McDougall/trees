@@ -169,11 +169,62 @@ pub struct Thickness {
     pub tip_radius: f32,
 }
 
+/// Longay (2014 C.1.2) petiole response, independent of numerical resolution.
+///
+/// The solver normalizes `target`, so its magnitude does not change response.
+/// Susceptibilities are non-negative rotation rates per world unit of petiole
+/// length. Defaults are illustrative, not calibrated mechanical properties.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PetioleResponse {
+    /// Preferred blade-normal direction T: finite, nonzero and normalizable.
+    pub target: glam::Vec3,
+    /// eH: susceptibility to twisting about heading H.
+    pub twist: f32,
+    /// eL: susceptibility to bending about blade-left L.
+    pub bend: f32,
+    /// eU: susceptibility to turning about blade-normal U.
+    pub turn: f32,
+}
+
+impl Default for PetioleResponse {
+    fn default() -> Self {
+        Self {
+            target: glam::Vec3::Y,
+            twist: 2.0,
+            bend: 2.0,
+            turn: 2.0,
+        }
+    }
+}
+
+impl PetioleResponse {
+    /// Validates response even when foliage is disabled. A zero susceptibility
+    /// disables that rotation; all three zero produce a straight petiole.
+    pub fn validate(&self) -> Result<(), SpeciesError> {
+        if !self.target.is_finite() || self.target.try_normalize().is_none() {
+            return Err(SpeciesError::OutOfRange {
+                field: "foliage.petiole_response.target",
+                value: self.target.length(),
+            });
+        }
+        for (field, value) in [
+            ("foliage.petiole_response.twist", self.twist),
+            ("foliage.petiole_response.bend", self.bend),
+            ("foliage.petiole_response.turn", self.turn),
+        ] {
+            if !value.is_finite() || value < 0.0 {
+                return Err(SpeciesError::OutOfRange { field, value });
+            }
+        }
+        Ok(())
+    }
+}
+
 /// Species-specific foliage, independent of branch buds (Longay 2014 C.1.1).
 ///
 /// Distances are world units and angles are radians. Defaults are illustrative
-/// broadleaf settings, not measurements of a named species. Petiole elasticity
-/// and blade reorientation belong to a later geometry stage.
+/// broadleaf settings, not measurements of a named species. Petiole response
+/// is applied by the engine-neutral rod solver, separately from placement.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Foliage {
     /// Whether this species produces leaves.
@@ -193,8 +244,10 @@ pub struct Foliage {
     pub blade_length: f32,
     /// Blade width; zero suppresses leaves.
     pub blade_width: f32,
-    /// Straight initial petiole length, non-negative.
+    /// Petiole rod arc length, non-negative.
     pub petiole_length: f32,
+    /// Target orientation and bending/twisting rates for the rod solver.
+    pub petiole_response: PetioleResponse,
     /// Engine-neutral appearance key. Image bytes and renderer handles live in the viewer.
     pub appearance: String,
 }
@@ -211,6 +264,7 @@ impl Default for Foliage {
             blade_length: 4.0 * 0.0254,
             blade_width: 4.0 * 0.0254,
             petiole_length: 0.08,
+            petiole_response: PetioleResponse::default(),
             appearance: "generic-broadleaf".into(),
         }
     }
@@ -436,6 +490,7 @@ impl TreeSpecies {
         non_negative("foliage.blade_length", f.blade_length)?;
         non_negative("foliage.blade_width", f.blade_width)?;
         non_negative("foliage.petiole_length", f.petiole_length)?;
+        f.petiole_response.validate()?;
         Ok(())
     }
 }
@@ -609,6 +664,35 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    #[test]
+    fn validates_species_petiole_response_even_when_foliage_is_disabled() {
+        let bad: &[fn(&mut PetioleResponse)] = &[
+            |r| r.target = glam::Vec3::ZERO,
+            |r| r.target.x = f32::NAN,
+            |r| r.target.y = f32::INFINITY,
+            |r| r.twist = -1.0,
+            |r| r.twist = f32::NAN,
+            |r| r.bend = -1.0,
+            |r| r.bend = f32::INFINITY,
+            |r| r.turn = -1.0,
+            |r| r.turn = f32::NAN,
+        ];
+        for edit in bad {
+            let mut s = TreeSpecies::default();
+            s.foliage.enabled = false;
+            edit(&mut s.foliage.petiole_response);
+            assert!(s.validate().is_err());
+        }
+        let mut s = TreeSpecies::default();
+        s.foliage.petiole_response = PetioleResponse {
+            target: glam::Vec3::Y * 8.0,
+            twist: 0.0,
+            bend: 0.0,
+            turn: 0.0,
+        };
+        assert_eq!(s.validate(), Ok(()));
     }
 
     #[test]

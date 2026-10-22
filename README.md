@@ -20,7 +20,7 @@ simulator is not written yet.
 
 | Crate | What works today | Planned |
 | --- | --- | --- |
-| [`trees-core`](crates/trees-core) | The tree graph (an arena of internodes whose empty child slots are buds), species parameters with validation and two presets, growing, pruning and shedding internodes, tip-to-base folds, pipe-model branch radii with width pins, stored species-dependent leaf attachments and initial frames, and the `Habitat` trait | The growth simulator: marker-based space colonization, a light grid, vigor allocation and automatic shedding |
+| [`trees-core`](crates/trees-core) | The tree graph (an arena of internodes whose empty child slots are buds), species parameters with validation and two presets, growing, pruning and shedding internodes, tip-to-base folds, pipe-model branch radii with width pins, stored species-dependent leaf attachments and initial frames, a Longay petiole-response rod solver, and the `Habitat` trait | The growth simulator: marker-based space colonization, a light grid, vigor allocation and automatic shedding |
 | [`trees-mesh`](crates/trees-mesh) | Wireframe output: one line per internode | Swept generalized cylinders, leaf instances, levels of detail |
 | [`trees-viewer`](crates/trees-viewer) | A Bevy app that grows a stand-in test tree and shows its tube mesh on a ground disc, with an orbit camera and an egui side panel that edits the seed and species growth parameters, regrowing the tree on each change. Right-click a branch for a menu that pins its width, re-solving the pipe model live; pins are marked in the view and listed in the panel | Brush, prune, bend and undo tools |
 
@@ -109,7 +109,7 @@ always produce the same tree.
 
 Foliage placement follows Longay’s thin-branch rule independently of buds. The core
 stores attachments and initial leaf frames; temporary debug disks (four inches by default, scaled from the blade base) visualize them in the viewer. The Foliage panel
-edits placement parameters; textured leaf geometry and uploads remain planned. See the [foliage contract](docs/foliage.md) for parameters and lifecycle.
+edits placement parameters. The core petiole solver returns reoriented frames and paths; connecting those to production leaf geometry and uploads remains planned. See the [foliage contract](docs/foliage.md) for parameters and lifecycle.
 
 The full design, including the data structures, the growth loop, the
 interaction tools and the geometry passes, is in

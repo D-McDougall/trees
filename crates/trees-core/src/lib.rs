@@ -19,14 +19,16 @@
 pub mod foliage;
 pub mod habitat;
 pub mod node;
+pub mod petiole;
 pub mod species;
 pub mod tree;
 
 pub use foliage::{Leaf, LeafId};
 pub use habitat::{Habitat, OpenAir};
 pub use node::{Bud, BudFate, NodeId, Slot, SlotIndex, TreeNode};
+pub use petiole::{Petiole, PetioleError, PetioleOptions, PetioleSample, solve_petiole};
 pub use species::{
-    Architecture, BranchingPattern, Foliage, Gravimorphism, Shadow, Shedding, SpaceColonization,
-    SpeciesError, Thickness, TreeSpecies, Tropism, Vigor, VigorModel,
+    Architecture, BranchingPattern, Foliage, Gravimorphism, PetioleResponse, Shadow, Shedding,
+    SpaceColonization, SpeciesError, Thickness, TreeSpecies, Tropism, Vigor, VigorModel,
 };
 pub use tree::Tree;
