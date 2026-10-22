@@ -235,8 +235,9 @@ fn menu_window(
     Ok(())
 }
 
-/// The menu for the branch at `path` of `tree`: its radius, whether it is
-/// pinned, and a width slider. Moving the slider pins the branch.
+/// The menu for the branch at `path` of `tree`: its radius, and an Adjust
+/// width section with a width slider and a Pinned checkbox. Moving the
+/// slider pins the branch; unchecking Pinned unpins it.
 fn menu_ui(ui: &mut egui::Ui, tree: &Tree, grown: &Tree, path: &[SlotIndex], pins: &mut WidthPins) {
     let id = tree
         .node_at(path)
@@ -249,14 +250,6 @@ fn menu_ui(ui: &mut egui::Ui, tree: &Tree, grown: &Tree, path: &[SlotIndex], pin
     }
     ui.add_enabled_ui(!node.stump, |ui| {
         let pin = pins.get(path);
-        let mut pinned = pin.is_some();
-        if ui.checkbox(&mut pinned, "Pinned").changed() {
-            if pinned {
-                pins.set(path, node.radius);
-            } else {
-                pins.remove(path);
-            }
-        }
         egui::CollapsingHeader::new("Adjust width")
             .id_salt("adjust width")
             .show(ui, |ui| {
@@ -280,6 +273,14 @@ fn menu_ui(ui: &mut egui::Ui, tree: &Tree, grown: &Tree, path: &[SlotIndex], pin
                         pins.set(path, r);
                     }
                 });
+                let mut pinned = pin.is_some();
+                if ui.checkbox(&mut pinned, "Pinned").changed() {
+                    if pinned {
+                        pins.set(path, node.radius);
+                    } else {
+                        pins.remove(path);
+                    }
+                }
             });
         if let Some(pin) = pin {
             if node.radius > pin {
