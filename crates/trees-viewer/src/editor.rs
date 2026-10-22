@@ -15,9 +15,9 @@ use bevy::window::PrimaryWindow;
 use bevy_egui::egui::{self, DragValue};
 use bevy_egui::input::EguiWantsInput;
 use bevy_egui::{EguiContexts, EguiPrimaryContextPass};
-use trees_core::{BranchingPattern, Tree, TreeSpecies, VigorModel};
+use trees_core::{BranchingPattern, SlotIndex, Tree, TreeSpecies, VigorModel};
 
-use crate::branches::{ShownTree, WidthPins, path_label};
+use crate::branches::{BranchMenu, BranchPath, ShownTree, WidthPins, path_label};
 
 /// What the tree is grown from. Changing it triggers a regrow.
 #[derive(Resource, Clone, Default, PartialEq)]
@@ -54,11 +54,13 @@ impl Plugin for EditorPlugin {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn panel(
     mut contexts: EguiContexts,
     mut params: ResMut<TreeParams>,
     mut pins: ResMut<WidthPins>,
     tree: Option<Res<ShownTree>>,
+    mut menu: ResMut<BranchMenu>,
     mut panel_width: ResMut<PanelWidth>,
     window: Single<&Window, With<PrimaryWindow>>,
     mut camera: Single<&mut Camera, With<Camera3d>>,
@@ -82,7 +84,14 @@ fn panel(
             egui::ScrollArea::vertical().show(ui, |ui| {
                 tree_ui(ui, &mut edited);
                 let tree = tree.as_deref().map(|t| &t.0);
-                pins_ui(ui, tree, &mut edited_pins);
+                let open = menu.target.as_deref();
+                if let Some(path) = pins_ui(ui, tree, open, &mut edited_pins) {
+                    if menu.target.as_ref() == Some(&path) {
+                        menu.target = None;
+                    } else {
+                        menu.open_at_branch(path);
+                    }
+                }
                 ui.separator();
                 species_ui(ui, &mut edited.species);
             });
@@ -132,8 +141,17 @@ fn tree_ui(ui: &mut egui::Ui, params: &mut TreeParams) {
 /// The list of width pins. A pin is grayed out while its branch is missing
 /// from the tree (or is a stump), and its radius is highlighted when the
 /// pin is too thin to hold and its node is widened.
-fn pins_ui(ui: &mut egui::Ui, tree: Option<&Tree>, pins: &mut WidthPins) {
-    let Some(tree) = tree else { return };
+///
+/// Returns the branch whose label was clicked, to open or close its menu;
+/// `open` is the branch whose menu is open now.
+fn pins_ui(
+    ui: &mut egui::Ui,
+    tree: Option<&Tree>,
+    open: Option<&[SlotIndex]>,
+    pins: &mut WidthPins,
+) -> Option<BranchPath> {
+    let tree = tree?;
+    let mut clicked = None;
     egui::CollapsingHeader::new("Width pins")
         .default_open(true)
         .show(ui, |ui| {
@@ -151,8 +169,12 @@ fn pins_ui(ui: &mut egui::Ui, tree: Option<&Tree>, pins: &mut WidthPins) {
                     let id = tree.node_at(path);
                     match id.and_then(|id| Some((id, tree.pin_exponent(id)?))) {
                         Some((id, n)) => {
-                            ui.label(format!("#{}", id.index()))
-                                .on_hover_text(path_label(path));
+                            let label = ui
+                                .selectable_label(open == Some(path), format!("#{}", id.index()))
+                                .on_hover_text(format!("{}: click to show", path_label(path)));
+                            if label.clicked() {
+                                clicked = Some(path.clone());
+                            }
                             let shown = tree.node(id).radius;
                             if shown > *r {
                                 ui.colored_label(
@@ -182,6 +204,7 @@ fn pins_ui(ui: &mut egui::Ui, tree: Option<&Tree>, pins: &mut WidthPins) {
                 pins.0.remove(i);
             }
         });
+    clicked
 }
 
 fn species_ui(ui: &mut egui::Ui, s: &mut TreeSpecies) {

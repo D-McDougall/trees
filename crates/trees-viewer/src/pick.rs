@@ -1,10 +1,12 @@
 //! Picking a branch under the pointer: a ray test against every internode,
-//! each taken as a capsule around its axis with the node's radius. The tube
+//! each taken as a capsule around its axis with the larger of the radii of
+//! the tube rings drawn at its two ends. The tube
 //! mesh is that cylinder with flat joints, so the rounded caps only matter
 //! where branches meet, and there either answer is fine.
 
 use glam::Vec3;
 use trees_core::{NodeId, Tree};
+use trees_mesh::base_ring_radius;
 
 /// Smallest radius a branch is picked with, in world units, so that twigs
 /// a few pixels wide can still be clicked.
@@ -15,7 +17,10 @@ const MIN_PICK_RADIUS: f32 = 0.06;
 pub fn pick(tree: &Tree, origin: Vec3, direction: Vec3) -> Option<NodeId> {
     tree.iter()
         .filter_map(|(id, node)| {
-            let radius = node.radius.max(MIN_PICK_RADIUS);
+            let radius = node
+                .radius
+                .max(base_ring_radius(tree, id))
+                .max(MIN_PICK_RADIUS);
             capsule_hit(origin, direction, node.base(), node.position, radius).map(|t| (t, id))
         })
         .min_by(|(a, _), (b, _)| a.total_cmp(b))

@@ -143,6 +143,20 @@ fn continuation(node: &TreeNode) -> Option<NodeId> {
     node.main.child()
 }
 
+/// Radius of the tube ring at the base of internode `id` in
+/// [`MeshStyle::Tubes`]: its parent's radius when it continues its parent's
+/// axis, since the two share the ring at the parent's tip, or its own when
+/// it starts an axis. The ring at its tip always has its own radius, and the
+/// tube is straight between the two, so a tool outlining one internode can
+/// use these to enclose exactly what is drawn.
+pub fn base_ring_radius(tree: &Tree, id: NodeId) -> f32 {
+    let node = tree.node(id);
+    match node.parent.map(|p| tree.node(p)) {
+        Some(parent) if continuation(parent) == Some(id) => parent.radius,
+        _ => node.radius,
+    }
+}
+
 /// Splits the tree into axes (design document, geometry pass 1): each axis
 /// is a chain of nodes joined through their main slots, from base to tip,
 /// and every node is on exactly one axis. Every lateral starts a new axis.
@@ -193,7 +207,8 @@ fn tubes(tree: &Tree, options: &TubeOptions) -> TreeMesh {
 
         // Ring k sits at the base of nodes[k] (k = 0) or the tip of
         // nodes[k - 1]; its tangent is the bisector of the headings there.
-        let mut rings: Vec<(Vec3, Vec3, f32)> = vec![(first.base(), first.heading, first.radius)];
+        let mut rings: Vec<(Vec3, Vec3, f32)> =
+            vec![(first.base(), first.heading, base_ring_radius(tree, axis[0]))];
         for (k, node) in nodes.iter().enumerate() {
             let tangent = match nodes.get(k + 1) {
                 Some(next) => (node.heading + next.heading)
@@ -415,6 +430,31 @@ mod tests {
         assert_eq!(mesh.uvs.len(), mesh.positions.len());
         // 3 quads of 2 triangles, then 3 cap triangles.
         assert_eq!(mesh.indices.len(), 3 * 6 + 3 * 3);
+    }
+
+    #[test]
+    fn base_ring_radius_matches_the_drawn_tube() {
+        let (mut t, [root, a, b, l1, l2]) = sapling();
+        let r = |t: &Tree, id| t.node(id).radius;
+        assert_eq!(base_ring_radius(&t, root), r(&t, root));
+        assert_eq!(base_ring_radius(&t, a), r(&t, root), "continues the trunk");
+        assert_eq!(base_ring_radius(&t, b), r(&t, a));
+        assert_eq!(base_ring_radius(&t, l1), r(&t, l1), "starts an axis");
+        assert_eq!(base_ring_radius(&t, l2), r(&t, l2));
+        // An extreme radius at one end, as a pin can set: the tube still
+        // runs from the parent's ring to the node's, and some vertex lies on
+        // each of them.
+        t.node_mut(b).radius = 0.001;
+        t.node_mut(a).radius = 3.0;
+        let mesh = tube_mesh(&t);
+        for (center, radius) in [
+            (t.node(b).base(), base_ring_radius(&t, b)),
+            (t.node(b).position, r(&t, b)),
+        ] {
+            assert!((0..mesh.positions.len() as u32).any(|i| {
+                ((v(&mesh, i) - center).length() - radius).abs() < 1e-5 * radius.max(1.0)
+            }));
+        }
     }
 
     #[test]

@@ -9,6 +9,8 @@
 //! - Open the menu: right-click a branch (a press and release without
 //!   dragging, so panning does not open it). The branch is outlined while
 //!   its menu is open.
+//! - Or click a pin in the panel's pin list: the menu opens beside its
+//!   branch.
 //! - Close it: right-click empty space, or press Escape.
 
 use bevy::prelude::*;
@@ -16,7 +18,8 @@ use bevy::window::PrimaryWindow;
 use bevy_egui::egui::{self, DragValue};
 use bevy_egui::input::EguiWantsInput;
 use bevy_egui::{EguiContexts, EguiPrimaryContextPass};
-use trees_core::{SlotIndex, Tree, TreeNode};
+use trees_core::{NodeId, SlotIndex, Tree};
+use trees_mesh::base_ring_radius;
 
 use crate::editor::{PanelWidth, pointer_over_panel};
 use crate::pick::pick;
@@ -31,6 +34,17 @@ pub struct BranchMenu {
     pub target: Option<BranchPath>,
     /// Top-left corner of the menu, in logical pixels.
     pub at: Vec2,
+    /// Set to have [`anchor_menu`] move the menu to its branch before it is
+    /// next drawn, for a menu opened from somewhere other than the 3D view.
+    pub anchor_at_branch: bool,
+}
+
+impl BranchMenu {
+    /// Opens the menu on `path`, beside the branch on screen.
+    pub fn open_at_branch(&mut self, path: BranchPath) {
+        self.target = Some(path);
+        self.anchor_at_branch = true;
+    }
 }
 
 /// The user's width pins: each branch's radius, applied to every regrown
@@ -93,7 +107,7 @@ impl Plugin for BranchesPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<BranchMenu>()
             .init_resource::<WidthPins>()
-            .add_systems(Update, (open_menu, draw_markers))
+            .add_systems(Update, (open_menu, anchor_menu, draw_markers).chain())
             .add_systems(EguiPrimaryContextPass, menu_window);
     }
 }
@@ -148,6 +162,38 @@ fn open_menu(
     };
     menu.target = pick(&tree.0, ray.origin, *ray.direction).and_then(|id| tree.0.slot_path(id));
     menu.at = cursor;
+    menu.anchor_at_branch = false;
+}
+
+/// Places a menu opened with [`BranchMenu::open_at_branch`] at the middle
+/// of its branch as seen by the camera, kept inside the 3D view. A branch
+/// behind the camera puts it in the middle of the view.
+fn anchor_menu(
+    camera: Single<(&Camera, &GlobalTransform), With<Camera3d>>,
+    tree: Option<Res<ShownTree>>,
+    mut menu: ResMut<BranchMenu>,
+) {
+    if !menu.anchor_at_branch {
+        return;
+    }
+    let (Some(tree), Some(path)) = (tree, menu.target.as_deref()) else {
+        return;
+    };
+    let (camera, transform) = *camera;
+    let Some(view) = camera.logical_viewport_rect() else {
+        return;
+    };
+    let Some(id) = tree.0.node_at(path) else {
+        menu.target = None;
+        return;
+    };
+    let node = tree.0.node(id);
+    let middle = node.position - node.heading * (node.length * 0.5);
+    let at = camera
+        .world_to_viewport(transform, middle)
+        .unwrap_or(view.center());
+    menu.at = at.clamp(view.min, view.max);
+    menu.anchor_at_branch = false;
 }
 
 /// Draws the open menu, and closes it if its branch left the tree.
@@ -161,6 +207,10 @@ fn menu_window(
     let (Some(path), Some(shown), Some(grown)) = (menu.target.clone(), shown, grown) else {
         return Ok(());
     };
+    if menu.anchor_at_branch {
+        // Not placed yet; drawing it now would flash it at the old spot.
+        return Ok(());
+    }
     if shown.0.node_at(&path).is_none() {
         menu.target = None;
         return Ok(());
@@ -246,6 +296,9 @@ fn menu_ui(ui: &mut egui::Ui, tree: &Tree, grown: &Tree, path: &[SlotIndex], pin
 
 /// Rings around the internode whose menu is open and at the middle of
 /// every pinned one, drawn a little outside the bark so they show over it.
+/// They use the radii of the tube rings the mesh draws at each end
+/// ([`base_ring_radius`]), not just the node's own radius, so they enclose
+/// the tube even when a pin makes one end much thicker than the other.
 fn draw_markers(
     mut gizmos: Gizmos,
     tree: Option<Res<ShownTree>>,
@@ -254,29 +307,30 @@ fn draw_markers(
 ) {
     let Some(tree) = tree else { return };
     let tree = &tree.0;
-    let ring = |gizmos: &mut Gizmos, node: &TreeNode, center: Vec3, scale: f32, color: Color| {
-        let rotation = Quat::from_rotation_arc(Vec3::Z, node.heading);
-        gizmos
-            .circle(
-                Isometry3d::new(center, rotation),
-                node.radius * scale,
-                color,
-            )
-            .resolution(24);
-    };
     for (path, _) in &pins.0 {
         if let Some(id) = tree.node_at(path) {
-            let node = tree.node(id);
+            let (node, [base, tip]) = (tree.node(id), ring_radii(tree, id));
             let middle = node.position - node.heading * (node.length * 0.5);
-            ring(&mut gizmos, node, middle, 1.4, PIN_COLOR);
+            ring(
+                &mut gizmos,
+                middle,
+                node.heading,
+                0.5 * (base + tip) * 1.4,
+                PIN_COLOR,
+            );
         }
     }
     if let Some(id) = menu.target.as_deref().and_then(|p| tree.node_at(p)) {
         let node = tree.node(id);
-        let r = node.radius * 1.2;
-        for end in [node.base(), node.position] {
-            ring(&mut gizmos, node, end, 1.2, SELECTED_COLOR);
-        }
+        let [base, tip] = ring_radii(tree, id).map(|r| r * 1.08);
+        ring(&mut gizmos, node.base(), node.heading, base, SELECTED_COLOR);
+        ring(
+            &mut gizmos,
+            node.position,
+            node.heading,
+            tip,
+            SELECTED_COLOR,
+        );
         for side in [
             node.lateral,
             node.binormal(),
@@ -284,12 +338,25 @@ fn draw_markers(
             -node.binormal(),
         ] {
             gizmos.line(
-                node.base() + side * r,
-                node.position + side * r,
+                node.base() + side * base,
+                node.position + side * tip,
                 SELECTED_COLOR,
             );
         }
     }
+}
+
+/// Radii of the tube rings at the base and tip of internode `id`.
+fn ring_radii(tree: &Tree, id: NodeId) -> [f32; 2] {
+    [base_ring_radius(tree, id), tree.node(id).radius]
+}
+
+/// A circle of `radius` about `center`, facing along `axis`.
+fn ring(gizmos: &mut Gizmos, center: Vec3, axis: Vec3, radius: f32, color: Color) {
+    let rotation = Quat::from_rotation_arc(Vec3::Z, axis);
+    gizmos
+        .circle(Isometry3d::new(center, rotation), radius, color)
+        .resolution(24);
 }
 
 /// A short label for `path`, such as `M·L0·M`; the root is `root`.
