@@ -332,6 +332,39 @@ mod tests {
     }
 
     #[test]
+    fn tropism_edits_regenerate_the_preview_reproducibly() {
+        let mut app = App::new();
+        app.init_resource::<TreeParams>()
+            .init_resource::<WidthPins>()
+            .insert_resource(Scene { ground_height: 0.0 })
+            .add_systems(Update, regrow.run_if(resource_changed::<TreeParams>));
+        app.update();
+        let original = geometry(&app.world().resource::<GrownTree>().0);
+        {
+            let mut params = app.world_mut().resource_mut::<TreeParams>();
+            params.species.tropism.main_set_point = std::f32::consts::FRAC_PI_2;
+            params.species.tropism.lateral_set_point = std::f32::consts::FRAC_PI_2;
+            params.species.tropism.straightness = 0.0;
+            params.species.tropism.gravitropism = 1.0;
+            params.species.tropism.environment = 0.0;
+        }
+        app.update();
+        let changed = geometry(&app.world().resource::<GrownTree>().0);
+        assert_ne!(original, changed);
+        let expected = grow_tree(
+            &Scene { ground_height: 0.0 },
+            app.world().resource::<TreeParams>(),
+        )
+        .unwrap();
+        assert_eq!(changed, geometry(&expected));
+        app.update();
+        assert_eq!(changed, geometry(&app.world().resource::<GrownTree>().0));
+        *app.world_mut().resource_mut::<TreeParams>() = TreeParams::default();
+        app.update();
+        assert_eq!(original, geometry(&app.world().resource::<GrownTree>().0));
+    }
+
+    #[test]
     fn foliage_controls_change_placements_without_changing_branches() {
         let species = TreeSpecies::default();
         let original = test_tree(&trees_core::OpenAir, species.clone(), 42).unwrap();
