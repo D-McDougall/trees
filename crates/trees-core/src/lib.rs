@@ -24,6 +24,7 @@ pub mod petiole;
 pub mod restricted_jitter;
 pub mod species;
 pub mod tree;
+pub mod tropism;
 
 pub use foliage::{Leaf, LeafId};
 pub use growth::{BudGrowth, SamplingConfig, grow_step, sense};
@@ -36,3 +37,5 @@ pub use species::{
     SpaceColonization, SpeciesError, Thickness, TreeSpecies, Tropism, Vigor, VigorModel,
 };
 pub use tree::Tree;
+
+pub use tropism::{blend_directions, gravitropic_target};
