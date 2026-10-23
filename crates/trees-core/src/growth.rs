@@ -1,7 +1,7 @@
 //! Occupancy-aware space colonization, without light or vigor simulation.
 //!
 //! Call [`sense`] to update bud scratch fields, or [`grow_step`] to also grow
-//! one internode per bud with a preferred direction. Competition reads one
+//! one internode per marker-supported bud, steered by species tropism. Competition reads one
 //! immutable tree state before any scratch fields or geometry change. Habitat
 //! implementations must likewise provide a consistent view during each call.
 
@@ -9,7 +9,10 @@ use std::collections::BTreeMap;
 
 use glam::{DVec3, Vec3};
 
-use crate::{BudFate, Habitat, NodeId, RestrictedJitter, RestrictedJitterError, SlotIndex, Tree};
+use crate::{
+    BudFate, Habitat, NodeId, RestrictedJitter, RestrictedJitterError, SlotIndex, Tree,
+    blend_directions, gravitropic_target,
+};
 
 /// World-origin marker grid configuration. Randomness uses [`Tree::seed`].
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -164,10 +167,16 @@ pub fn sense(
 
 /// Sense once, then grow one species-length internode per active bud.
 ///
-/// New buds and nodes participate only on the next call. Markers guide
-/// direction; they are never endpoints. [`Tree::grow`] checks habitat at each
+/// New buds and nodes participate only on the next call. Marker support is
+/// required even when the environmental weight is zero. The normalized marker
+/// direction is blended with the bud heading and local gravitropic target;
+/// sensing scratch fields retain their environmental meaning. Only a main-slot
+/// continuation on order zero uses the main set-point; all other growth uses
+/// the lateral set-point. Markers are never endpoints. [`Tree::grow`] checks habitat at each
 /// proposed endpoint; a blocked bud remains dormant. Advances the step once
-/// even if nothing grows. Returns IDs of successfully added nodes.
+/// even if nothing grows. A cancelling blend is passed through as zero and
+/// leaves the bud dormant. Direct calls to [`Tree::grow`] retain caller-supplied
+/// directions. Returns IDs of successfully added nodes.
 ///
 /// ```
 /// use std::sync::Arc;
@@ -186,8 +195,18 @@ pub fn grow_step(
     let sensed = sense(tree, habitat, config)?;
     let mut added = Vec::new();
     for bud in sensed {
-        if let Some(direction) = bud.preferred_direction {
-            let length = tree.node(bud.node).species.architecture.internode_length;
+        if let Some(environment) = bud.preferred_direction {
+            let parent = tree.node(bud.node);
+            let heading = parent.slot(bud.slot).bud().unwrap().direction;
+            let weights = &parent.species.tropism;
+            let inclination = if parent.order == 0 && bud.slot == SlotIndex::Main {
+                weights.main_set_point
+            } else {
+                weights.lateral_set_point
+            };
+            let target = gravitropic_target(heading, inclination, tree.seed(), bud.node, bud.slot);
+            let direction = blend_directions(heading, target, environment, weights);
+            let length = parent.species.architecture.internode_length;
             if let Some(id) = tree.grow(habitat, bud.node, bud.slot, direction, length) {
                 added.push(id);
             } else {
@@ -358,5 +377,148 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
+    }
+
+    fn set_weights(tree: &mut Tree, straightness: f32, gravitropism: f32, environment: f32) {
+        let root = tree.root();
+        let species = Arc::make_mut(&mut tree.node_mut(root).species);
+        species.tropism.straightness = straightness;
+        species.tropism.gravitropism = gravitropism;
+        species.tropism.environment = environment;
+    }
+
+    #[test]
+    fn environment_only_matches_explicit_growth_and_replays() {
+        let mut actual = tree(42);
+        set_weights(&mut actual, 0.0, 0.0, 1.0);
+        let mut replay = actual.clone();
+        let mut expected = actual.clone();
+        let sensed = sense(&mut expected, &OpenAir, CONFIG).unwrap();
+        let bud = &sensed[0];
+        let length = expected
+            .node(bud.node)
+            .species
+            .architecture
+            .internode_length;
+        let child = expected
+            .grow(
+                &OpenAir,
+                bud.node,
+                bud.slot,
+                bud.preferred_direction.unwrap(),
+                length,
+            )
+            .unwrap();
+        let added = grow_step(&mut actual, &OpenAir, CONFIG).unwrap();
+        assert_eq!(added, grow_step(&mut replay, &OpenAir, CONFIG).unwrap());
+        assert_eq!(
+            actual.node(added[0]).position,
+            expected.node(child).position
+        );
+        for (id, node) in actual.iter() {
+            assert_eq!(node.position, replay.node(id).position);
+            assert_eq!(node.heading, replay.node(id).heading);
+        }
+    }
+
+    #[test]
+    fn steering_preserves_environmental_fields_and_marker_gating() {
+        for (straightness, gravitropism, expected) in [(1.0, 0.0, Vec3::X), (0.0, 1.0, Vec3::Y)] {
+            let mut tree = tree(1);
+            set_weights(&mut tree, straightness, gravitropism, 0.0);
+            let root = tree.root();
+            Arc::make_mut(&mut tree.node_mut(root).species)
+                .tropism
+                .main_set_point = 0.0;
+            assert_eq!(
+                sense(&mut tree, &OpenAir, CONFIG).unwrap()[0].preferred_direction,
+                Some(Vec3::X)
+            );
+            // Endpoint rejection retains the bud and its environmental scratch data.
+            let endpoint = tree.node(root).position + expected;
+            let sensed = sense(&mut tree, &|p: Vec3| p == endpoint, CONFIG).unwrap();
+            assert!(
+                grow_step(&mut tree, &|p: Vec3| p == endpoint, CONFIG)
+                    .unwrap()
+                    .is_empty()
+            );
+            let bud = tree.node(root).main.bud().unwrap();
+            assert_eq!(bud.fate, BudFate::Dormant);
+            assert_eq!(bud.marker_direction_sum, sensed[0].direction_sum);
+            let added = grow_step(&mut tree, &OpenAir, CONFIG).unwrap();
+            assert_eq!(added.len(), 1);
+            assert!((tree.node(added[0]).heading - expected).length() < 1e-6);
+            assert!(
+                (tree
+                    .node(added[0])
+                    .position
+                    .distance(tree.node(root).position)
+                    - 1.0)
+                    .abs()
+                    < 1e-6
+            );
+            assert_eq!(tree.step(), 2);
+        }
+        let mut tree = tree(1);
+        set_weights(&mut tree, 0.0, 1.0, 0.0);
+        assert!(
+            grow_step(&mut tree, &|_: Vec3| true, CONFIG)
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            tree.node(tree.root()).main.bud().unwrap().fate,
+            BudFate::Dormant
+        );
+        assert_eq!(tree.step(), 1);
+    }
+
+    #[test]
+    fn prospective_axis_order_selects_set_point() {
+        for (order, slot, expected) in [
+            (0, SlotIndex::Main, Vec3::Y),
+            (0, SlotIndex::Lateral(0), -Vec3::Y),
+            (0, SlotIndex::Lateral(1), -Vec3::Y),
+            (1, SlotIndex::Main, -Vec3::Y),
+            (1, SlotIndex::Lateral(0), -Vec3::Y),
+        ] {
+            let mut tree = tree(1);
+            set_weights(&mut tree, 0.0, 1.0, 0.0);
+            let root = tree.root();
+            let node = tree.node_mut(root);
+            node.order = order;
+            node.main = Slot::Empty;
+            *node.slot_mut(slot) = Slot::Bud(Bud::new(Vec3::X));
+            let species = Arc::make_mut(&mut node.species);
+            species.tropism.main_set_point = 0.0;
+            species.tropism.lateral_set_point = std::f32::consts::PI;
+            species.architecture.branching = crate::BranchingPattern::Opposite;
+            let added = grow_step(&mut tree, &OpenAir, CONFIG).unwrap();
+            assert_eq!(added.len(), 1);
+            assert_eq!(tree.node(added[0]).heading, expected);
+            assert_eq!(
+                tree.node(added[0]).order,
+                order + u16::from(slot != SlotIndex::Main)
+            );
+        }
+    }
+
+    #[test]
+    fn cancellation_is_dormant_and_direct_growth_keeps_caller_direction() {
+        let mut tree = tree(1);
+        set_weights(&mut tree, 0.5, 0.5, 0.0);
+        let root = tree.root();
+        let node = tree.node_mut(root);
+        node.main = Slot::Bud(Bud::new(-Vec3::Y));
+        Arc::make_mut(&mut node.species).tropism.main_set_point = 0.0;
+        assert!(grow_step(&mut tree, &OpenAir, CONFIG).unwrap().is_empty());
+        let bud = tree.node(root).main.bud().unwrap();
+        assert!(bud.marker_count > 0);
+        assert_eq!(bud.fate, BudFate::Dormant);
+        assert_eq!(tree.step(), 1);
+        let child = tree
+            .grow(&OpenAir, root, SlotIndex::Main, Vec3::Z, 2.0)
+            .unwrap();
+        assert_eq!(tree.node(child).heading, Vec3::Z);
     }
 }
