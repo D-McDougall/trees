@@ -35,7 +35,7 @@ fn contents(ui: &mut egui::Ui, label: &str, body: &str) {
 }
 
 /// Help on both normal and disabled controls. Disabling simulation must never
-/// disable the explanation of what the parameter will eventually do.
+/// disable the explanation of the parameter’s behavior.
 pub fn attach(response: egui::Response, label: &str) -> egui::Response {
     let body = entry(label).unwrap_or_else(|| panic!("missing parameter help: {label}"));
     response

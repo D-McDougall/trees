@@ -4,7 +4,7 @@
 //!
 //! Every input is limited to the range [`TreeSpecies::validate`] accepts, so
 //! the panel cannot produce an invalid species. Parameters not simulated yet
-//! are shown grayed out, except the direction blend preview.
+//! are shown grayed out.
 
 use std::f32::consts::{PI, TAU};
 use std::ops::RangeInclusive;
@@ -353,7 +353,6 @@ fn species_ui(ui: &mut egui::Ui, s: &mut TreeSpecies, spacing: f32) {
     });
 
     section(ui, "Tropism", |ui| {
-        ui.disable();
         let t = &mut s.tropism;
         angle(
             ui,
@@ -362,8 +361,6 @@ fn species_ui(ui: &mut egui::Ui, s: &mut TreeSpecies, spacing: f32) {
             0.0..=180.0,
         );
         angle(ui, "Main set-point", &mut t.main_set_point, 0.0..=180.0);
-        // The weights can be edited together even while tropism simulation
-        // is pending. Use a fresh scope because the angle rows are disabled.
     });
     section(ui, "Direction weights", |ui| {
         let t = &mut s.tropism;
@@ -380,7 +377,7 @@ fn species_ui(ui: &mut egui::Ui, s: &mut TreeSpecies, spacing: f32) {
             [t.straightness, t.gravitropism, t.environment] = weights;
         }
         ui.end_row();
-        ui.weak("Direction weights are not simulated yet.");
+        ui.weak("Steering strengths; buds still need free-space markers.");
         ui.end_row();
     });
 

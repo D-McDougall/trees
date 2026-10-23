@@ -17,9 +17,10 @@ a half-angle. Model coefficients and the gravimorphism ellipse are dimensionless
 
 The current preview uses occupancy-aware space colonization with at most six
 steps and 256 nodes. Each successful bud produces one constant-length internode
-in the mean unit direction of its won markers. Vigor, shadow propagation,
-direction blending, gravimorphism and automatic shedding are pending. The
-corresponding help describes the intended literature model, not active behavior.
+in a direction blending its heading, gravitropic target and the mean unit
+direction of its won markers. Buds must win markers even when the environment
+weight is zero. Vigor, shadow propagation, gravimorphism and automatic shedding
+are pending; their help describes the intended literature model.
 
 Smelik et al. (2014), *A Survey on Procedural Modeling for Virtual Worlds*, §3
 and §§10.2–10.3, motivates explaining coupled parameters and preserving designer
@@ -88,7 +89,7 @@ Source: Longay (2014), Interactive Procedural Modelling of Trees and Landscapes,
 
 Status: Simulated.
 
-Initial angle between a lateral bud and the heading of its supporting internode, in °. Small values point potential branches along their parent; larger values spread their perception cones outward. Here marker sensing uses that initial bud direction and then grows toward the average unit direction of won markers, so the final branch angle need not exactly equal the setting. Tune together with perception half-angle and divergence. The effect of branch angle on the whole crown emerges through competition rather than directly prescribing a silhouette.
+Initial angle between a lateral bud and the heading of its supporting internode, in °. Small values point potential branches along their parent; larger values spread their perception cones outward. Marker sensing uses that initial bud direction; growth then blends the heading, gravitropic target and average unit direction of won markers, so the final branch angle need not exactly equal the setting. Tune together with perception half-angle and divergence. The effect of branch angle on the whole crown emerges through competition rather than directly prescribing a silhouette.
 
 Source: Longay (2014), Interactive Procedural Modelling of Trees and Landscapes, §4.1, Fig. 4.2; Hart (2020), Interactive Visualization and Modeling of Plant Structures in Virtual Reality, §9.3.
 
@@ -254,25 +255,25 @@ Source: Longay (2014), Interactive Procedural Modelling of Trees and Landscapes,
 
 ### Lateral set-point θ
 
-Status: Not simulated.
+Status: Simulated.
 
-Preferred inclination of axes of order greater than zero, measured in ° from vertical up. Here 0° means upward, 90° means horizontal (plagiotropic), and 180° means downward. A local target direction is chosen in the vertical plane of each heading so branches can spread radially rather than all following one compass direction. The gravitropism weight determines how strongly growth follows this target; the angle alone is not the turning strength. This model concerns new growth rather than bending existing branches under weight. The preview does not apply tropism yet.
+Preferred inclination of axes of order greater than zero, measured in ° from vertical up. Here 0° means upward, 90° means horizontal (plagiotropic), and 180° means downward. A local target direction is chosen in the vertical plane of each heading so branches can spread radially rather than all following one compass direction. The gravitropism weight determines how strongly growth follows this target; the angle alone is not the turning strength. This model concerns new growth rather than bending existing branches under weight. The lateral setting applies from the first internode grown by a lateral bud, including one on the trunk, and to subsequent continuations of that lateral axis. Buds still need to win free-space markers.
 
 Source: Longay (2014), Interactive Procedural Modelling of Trees and Landscapes, §4.4.2, Fig. 4.16.
 
 ### Main set-point
 
-Status: Not simulated.
+Status: Simulated.
 
-Preferred inclination in ° from vertical up for the main, order-zero axis. A 0° main set-point paired with roughly horizontal lateral set-points can create the upright leader and spreading tiers characteristic of conifer-like forms. Use separate values to distinguish trunk behavior from branches, rather than forcing one global direction on the entire tree. As with the lateral set-point, its influence depends on the gravitropism blend weight and competition. This is a new-growth direction target, not an instruction to rotate existing trunk geometry, and is pending in the preview.
+Preferred inclination in ° from vertical up for the main, order-zero axis. A 0° main set-point paired with roughly horizontal lateral set-points can create the upright leader and spreading tiers characteristic of conifer-like forms. Use separate values to distinguish trunk behavior from branches, rather than forcing one global direction on the entire tree. As with the lateral set-point, its influence depends on the gravitropism blend weight and competition. Only a prospective order-zero child uses this setting; a lateral bud on the trunk uses the lateral set-point instead. This target steers new growth without rotating existing trunk geometry. Buds still need to win free-space markers.
 
 Source: Longay (2014), Interactive Procedural Modelling of Trees and Landscapes, §4.4.2, Fig. 4.19.
 
 ### Direction weights
 
-Status: Preview only; not simulated.
+Status: Simulated.
 
-Blends three unit directions: straightness α preserves the current bud heading, gravitropism β points toward the appropriate set-point inclination, and environment γ points toward free-space markers. The intended direction is normalize(αH+βT+γE). Move toward a corner to strengthen that influence, toward an edge to remove the opposite influence, or toward the center for a balanced mix. The three dimensionless weights sum to 100%, so increasing one reduces the others. High straightness preserves branch paths; high environment adapts them to openings. The picker edits stored values, but the current preview uses only marker direction.
+Blends three unit directions: straightness α preserves the current bud heading, gravitropism β points toward the appropriate set-point inclination, and environment γ points toward free-space markers. The growth direction is normalize(αH+βT+γE). Move toward a corner to strengthen that influence, toward an edge to remove the opposite influence, or toward the center for a balanced mix. The three dimensionless weights sum to 100%, so increasing one reduces the others. High straightness preserves branch paths; high environment adapts them to openings. The triangle controls steering strengths, not growth eligibility: buds must win markers even when γ is zero. A cancelling blend returns a zero direction; no internode is added and the bud becomes dormant for that step.
 
 Source: Longay (2014), Interactive Procedural Modelling of Trees and Landscapes, §§4.4.1–4.4.2, 5.1.1; Hart (2020), Interactive Visualization and Modeling of Plant Structures in Virtual Reality, §11.4.4.
 
