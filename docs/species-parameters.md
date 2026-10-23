@@ -261,7 +261,7 @@ Preferred inclination of axes of order greater than zero, measured in ° from ve
 
 Source: Longay (2014), Interactive Procedural Modelling of Trees and Landscapes, §4.4.2, Fig. 4.16.
 
-### Main set-point
+### Apical set-point θ
 
 Status: Simulated.
 

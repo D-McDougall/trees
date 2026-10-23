@@ -352,7 +352,7 @@ fn species_ui(ui: &mut egui::Ui, s: &mut TreeSpecies, spacing: f32) {
         );
     });
 
-    section(ui, "Tropism", |ui| {
+    section(ui, "Gravitrophism", |ui| {
         let t = &mut s.tropism;
         angle(
             ui,
@@ -360,8 +360,11 @@ fn species_ui(ui: &mut egui::Ui, s: &mut TreeSpecies, spacing: f32) {
             &mut t.lateral_set_point,
             0.0..=180.0,
         );
-        angle(ui, "Main set-point", &mut t.main_set_point, 0.0..=180.0);
-    });
+        angle(ui, "Apical set-point θ", &mut t.main_set_point, 0.0..=180.0);
+    })
+    .on_hover_text(
+        "Gravitrophism (gravitropism) is growth in response to gravity. These set-point angles determine the preferred direction of main and lateral shoots relative to upward vertical: 0° points upward, 90° is horizontal, and 180° points downward.",
+    );
     section(ui, "Direction weights", |ui| {
         let t = &mut s.tropism;
         let mut weights = [t.straightness, t.gravitropism, t.environment];
@@ -462,12 +465,13 @@ fn arrangement(ui: &mut egui::Ui, label: &str, id: &str, value: &mut BranchingPa
 }
 
 /// A collapsible group of label/value rows.
-fn section(ui: &mut egui::Ui, title: &str, rows: impl FnOnce(&mut egui::Ui)) {
+fn section(ui: &mut egui::Ui, title: &str, rows: impl FnOnce(&mut egui::Ui)) -> egui::Response {
     egui::CollapsingHeader::new(title)
         .default_open(true)
         .show(ui, |ui| {
             egui::Grid::new(title).num_columns(2).show(ui, rows);
-        });
+        })
+        .header_response
 }
 
 fn number(ui: &mut egui::Ui, label: &str, value: &mut f32, range: RangeInclusive<f32>) {
